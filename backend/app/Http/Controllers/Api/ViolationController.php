@@ -1,0 +1,217 @@
+<?php
+
+namespace App\Http\Controllers\Api;
+
+use App\Http\Requests\Violation\StoreViolationRequest;
+use App\Http\Requests\Violation\UpdateViolationRequest;
+use App\Http\Resources\UserResource;
+use App\Http\Resources\ViolationEvidenceResource;
+use App\Http\Resources\ViolationResource;
+use App\Models\Inspection;
+use App\Models\User;
+use App\Models\Violation;
+use App\Models\ViolationEvidence;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+
+class ViolationController extends BaseApiController
+{
+    public function index(Request $request): JsonResponse
+    {
+        $query = Violation::query()
+            ->with('establishment')
+            ->withCount('evidence');
+
+        if ($request->filled('status') && $request->input('status') !== 'all') {
+            $query->where('status', $request->input('status'));
+        }
+
+        if ($request->filled('severity') && $request->input('severity') !== 'all') {
+            $query->where('severity', $request->input('severity'));
+        }
+
+        if ($request->filled('search')) {
+            $search = '%' . strtolower($request->string('search')->trim()->toString()) . '%';
+
+            $query->where(function ($q) use ($search) {
+                $q->whereRaw('LOWER(title) LIKE ?', [$search])
+                    ->orWhereRaw('LOWER(description) LIKE ?', [$search])
+                    ->orWhereHas('establishment', function ($establishmentQuery) use ($search) {
+                        $establishmentQuery->whereRaw('LOWER(name) LIKE ?', [$search])
+                            ->orWhereRaw('LOWER(registration_number) LIKE ?', [$search]);
+                    });
+            });
+        }
+
+        $perPage = min($request->integer('per_page', 10), 50);
+        $violations = $query
+            ->orderByRaw("CASE severity WHEN 'major' THEN 1 WHEN 'moderate' THEN 2 ELSE 3 END")
+            ->orderByRaw('correction_deadline IS NULL')
+            ->orderBy('correction_deadline')
+            ->latest()
+            ->paginate($perPage);
+
+        return $this->success([
+            'violations' => ViolationResource::collection($violations),
+            'meta' => [
+                'current_page' => $violations->currentPage(),
+                'last_page' => $violations->lastPage(),
+                'per_page' => $violations->perPage(),
+                'total' => $violations->total(),
+            ],
+        ], 'Violations listed successfully');
+    }
+
+    public function options(): JsonResponse
+    {
+        $inspections = Inspection::query()
+            ->with(['establishment', 'results.checklistItem'])
+            ->orderByDesc('inspection_date')
+            ->limit(100)
+            ->get()
+            ->map(fn (Inspection $inspection) => [
+                'id' => $inspection->id,
+                'inspection_date' => $inspection->inspection_date?->toDateString(),
+                'status' => $inspection->status,
+                'establishment' => [
+                    'id' => $inspection->establishment?->id,
+                    'name' => $inspection->establishment?->name,
+                    'registration_number' => $inspection->establishment?->registration_number,
+                ],
+                'results' => $inspection->results->map(fn ($result) => [
+                    'id' => $result->id,
+                    'checklist_item_id' => $result->checklist_item_id,
+                    'item_title' => $result->checklistItem?->title,
+                    'item_category' => $result->checklistItem?->category,
+                    'compliance_status' => $result->compliance_status,
+                ])->values(),
+            ]);
+
+        $assignees = User::query()
+            ->where('is_active', true)
+            ->whereHas('role', fn ($query) => $query->whereIn('slug', ['administrator', 'health_officer', 'inspector']))
+            ->with('role')
+            ->orderBy('name')
+            ->get();
+
+        return $this->success([
+            'inspections' => $inspections,
+            'assignees' => UserResource::collection($assignees),
+        ], 'Violation options retrieved successfully');
+    }
+
+    public function store(StoreViolationRequest $request): JsonResponse
+    {
+        $payload = $this->payloadWithInspection($request->validated());
+        $payload['reported_by'] = $request->user()->id;
+
+        if ($payload['status'] === 'resolved') {
+            $payload['resolved_at'] = now();
+            $payload['resolved_by'] = $request->user()->id;
+        }
+
+        $violation = Violation::query()->create($payload);
+
+        return $this->success(
+            new ViolationResource($this->loadViolation($violation)),
+            'Violation created successfully',
+            201
+        );
+    }
+
+    public function show(Violation $violation): JsonResponse
+    {
+        return $this->success(
+            new ViolationResource($this->loadViolation($violation)),
+            'Violation details retrieved successfully'
+        );
+    }
+
+    public function update(UpdateViolationRequest $request, Violation $violation): JsonResponse
+    {
+        $payload = $this->payloadWithInspection($request->validated());
+
+        if ($payload['status'] === 'resolved' && $violation->status !== 'resolved') {
+            $payload['resolved_at'] = now();
+            $payload['resolved_by'] = $request->user()->id;
+        }
+
+        if ($payload['status'] !== 'resolved') {
+            $payload['resolved_at'] = null;
+            $payload['resolved_by'] = null;
+        }
+
+        $violation->update($payload);
+
+        return $this->success(
+            new ViolationResource($this->loadViolation($violation)),
+            'Violation updated successfully'
+        );
+    }
+
+    public function destroy(Violation $violation): JsonResponse
+    {
+        $violation->delete();
+
+        return $this->success(null, 'Violation archived successfully');
+    }
+
+    public function storeEvidence(Request $request, Violation $violation): JsonResponse
+    {
+        $validated = $request->validate([
+            'evidence_type' => ['required', 'in:initial,corrective'],
+            'description' => ['nullable', 'string'],
+            'files' => ['required', 'array'],
+            'files.*' => ['file', 'max:10240'],
+        ]);
+
+        $evidenceIds = [];
+
+        foreach ($request->file('files', []) as $file) {
+            $evidence = ViolationEvidence::query()->create([
+                'violation_id' => $violation->id,
+                'uploaded_by' => $request->user()->id,
+                'file_path' => $file->store('violation-evidence', 'public'),
+                'file_name' => $file->getClientOriginalName(),
+                'mime_type' => $file->getMimeType(),
+                'evidence_type' => $validated['evidence_type'],
+                'description' => $validated['description'] ?? null,
+            ]);
+
+            $evidenceIds[] = $evidence->id;
+        }
+
+        return $this->success(
+            ViolationEvidenceResource::collection(
+                ViolationEvidence::query()
+                    ->whereIn('id', $evidenceIds)
+                    ->with('uploader.role')
+                    ->get()
+            ),
+            'Violation evidence uploaded successfully',
+            201
+        );
+    }
+
+    private function payloadWithInspection(array $payload): array
+    {
+        $inspection = Inspection::query()->findOrFail($payload['inspection_id']);
+        $payload['establishment_id'] = $inspection->establishment_id;
+
+        return $payload;
+    }
+
+    private function loadViolation(Violation $violation): Violation
+    {
+        return $violation->load([
+            'establishment',
+            'inspection.establishment',
+            'inspection.inspector.role',
+            'inspectionResult.checklistItem.checklist',
+            'reporter.role',
+            'assignee.role',
+            'resolver.role',
+            'evidence.uploader.role',
+        ]);
+    }
+}
