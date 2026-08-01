@@ -2,8 +2,8 @@
 
 namespace App\Http\Requests\Auth;
 
+use App\Rules\StrongPassword;
 use Illuminate\Foundation\Http\FormRequest;
-use Illuminate\Validation\Rules\Password;
 
 class RegisterRequest extends FormRequest
 {
@@ -18,7 +18,8 @@ class RegisterRequest extends FormRequest
             'name' => ['required', 'string', 'max:255'],
             'email' => ['required', 'email', 'max:255', 'unique:users,email'],
             'phone' => ['nullable', 'string', 'max:20'],
-            'password' => ['required', 'confirmed', Password::min(8)],
+            'password' => ['required', 'confirmed', new StrongPassword],
+            'verification_channel' => ['nullable', 'string', 'in:email,sms'],
         ];
     }
 }

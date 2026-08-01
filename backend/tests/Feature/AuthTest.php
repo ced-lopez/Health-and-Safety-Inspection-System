@@ -2,13 +2,13 @@
 
 namespace Tests\Feature;
 
-use App\Models\AuditLog;
 use App\Models\Role;
 use App\Models\User;
+use App\Notifications\SendVerificationCode;
 use Database\Seeders\RoleSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Hash;
-use Laravel\Sanctum\PersonalAccessToken;
+use Illuminate\Support\Facades\Notification;
 use Tests\TestCase;
 
 class AuthTest extends TestCase
@@ -24,12 +24,14 @@ class AuthTest extends TestCase
 
     public function test_user_can_register_successfully(): void
     {
+        Notification::fake();
+
         $payload = [
             'name' => 'John Doe',
             'email' => 'john.doe@example.com',
             'phone' => '09151112222',
-            'password' => 'password123',
-            'password_confirmation' => 'password123',
+            'password' => 'Password123!',
+            'password_confirmation' => 'Password123!',
         ];
 
         $response = $this->postJson('/api/v1/auth/register', $payload);
@@ -39,7 +41,6 @@ class AuthTest extends TestCase
                 'success',
                 'message',
                 'data' => [
-                    'token',
                     'user' => [
                         'id',
                         'name',
@@ -54,20 +55,26 @@ class AuthTest extends TestCase
                         ],
                         'created_at',
                     ],
+                    'verification_required',
+                    'verification_channel',
+                    'email',
                 ],
+            ])
+            ->assertJsonFragment([
+                'verification_required' => true,
+                'verification_channel' => 'email',
             ]);
 
-        // Assert user was created in the database and assigned the default 'staff' role
-        $this->assertDatabaseHas('users', [
-            'email' => 'john.doe@example.com',
-            'name' => 'John Doe',
-            'phone' => '09151112222',
-            'is_active' => true,
-        ]);
-
         $user = User::query()->where('email', 'john.doe@example.com')->first();
-        $staffRole = Role::query()->where('slug', 'staff')->first();
-        $this->assertEquals($staffRole->id, $user->role_id);
+
+        // New registrations are assigned the default 'resident' role and are unverified
+        $residentRole = Role::query()->where('slug', 'resident')->first();
+        $this->assertEquals($residentRole->id, $user->role_id);
+        $this->assertNull($user->email_verified_at);
+        $this->assertNotNull($user->verification_code_hash);
+
+        // A verification code notification is dispatched
+        Notification::assertSentTo($user, SendVerificationCode::class);
 
         // Assert audit log was recorded
         $this->assertDatabaseHas('audit_logs', [
@@ -75,6 +82,141 @@ class AuthTest extends TestCase
             'event' => 'auth.registered',
             'auditable_type' => User::class,
             'auditable_id' => $user->id,
+        ]);
+    }
+
+    public function test_user_can_verify_registration_code(): void
+    {
+        Notification::fake();
+
+        $payload = [
+            'name' => 'Jane Doe',
+            'email' => 'jane.doe@example.com',
+            'phone' => '09151113333',
+            'password' => 'Password123!',
+            'password_confirmation' => 'Password123!',
+        ];
+
+        $this->postJson('/api/v1/auth/register', $payload);
+
+        $user = User::query()->where('email', 'jane.doe@example.com')->first();
+
+        Notification::assertSentTo($user, SendVerificationCode::class, function ($notification) use ($user) {
+            $response = $this->postJson('/api/v1/auth/verify', [
+                'email' => $user->email,
+                'code' => $notification->code,
+            ]);
+
+            $response->assertStatus(200)
+                ->assertJsonStructure([
+                    'success',
+                    'message',
+                    'data' => [
+                        'token',
+                        'user' => [
+                            'id',
+                            'name',
+                            'email',
+                            'is_active',
+                            'role',
+                        ],
+                    ],
+                ]);
+
+            $user->refresh();
+
+            $this->assertNotNull($user->email_verified_at);
+            $this->assertNull($user->verification_code_hash);
+
+            return true;
+        });
+    }
+
+    public function test_verification_fails_with_wrong_code(): void
+    {
+        Notification::fake();
+
+        $payload = [
+            'name' => 'Joe Doe',
+            'email' => 'joe.doe@example.com',
+            'phone' => '09151114444',
+            'password' => 'Password123!',
+            'password_confirmation' => 'Password123!',
+        ];
+
+        $this->postJson('/api/v1/auth/register', $payload);
+
+        $user = User::query()->where('email', 'joe.doe@example.com')->first();
+
+        $response = $this->postJson('/api/v1/auth/verify', [
+            'email' => $user->email,
+            'code' => '000000',
+        ]);
+
+        $response->assertStatus(422)
+            ->assertJsonValidationErrors(['code']);
+
+        $this->assertNull($user->refresh()->email_verified_at);
+    }
+
+    public function test_unverified_user_login_requires_verification(): void
+    {
+        Notification::fake();
+
+        $residentRole = Role::query()->where('slug', 'resident')->first();
+        $user = User::query()->create([
+            'role_id' => $residentRole->id,
+            'name' => 'Unverified Resident',
+            'email' => 'unverified@example.com',
+            'phone' => '09151115555',
+            'password' => Hash::make('password123'),
+            'is_active' => true,
+            'email_verified_at' => null,
+        ]);
+
+        $payload = [
+            'email' => 'unverified@example.com',
+            'password' => 'password123',
+            'portal' => 'resident',
+        ];
+
+        $response = $this->postJson('/api/v1/auth/login', $payload);
+
+        // Login for an unverified account requires verification and issues no token
+        $response->assertStatus(200)
+            ->assertJsonStructure([
+                'success',
+                'message',
+                'data' => [
+                    'user',
+                    'verification_required',
+                    'verification_channel',
+                    'email',
+                ],
+            ])
+            ->assertJsonFragment([
+                'verification_required' => true,
+                'verification_channel' => 'email',
+            ])
+            ->assertJsonMissingPath('data.token');
+
+        // A fresh verification code is issued
+        Notification::assertSentTo($user, SendVerificationCode::class);
+
+        // The issued code lets the resident verify and obtain a token
+        $code = Notification::sent($user, SendVerificationCode::class)->first()->code;
+
+        $this->postJson('/api/v1/auth/verify', [
+            'email' => $user->email,
+            'code' => $code,
+        ])->assertStatus(200)->assertJsonStructure(['data' => ['token']]);
+
+        $this->assertNotNull($user->refresh()->email_verified_at);
+
+        // Assert audit log was recorded
+        $this->assertDatabaseHas('audit_logs', [
+            'user_id' => $user->id,
+            'event' => 'auth.verification_required',
         ]);
     }
 
@@ -95,18 +237,20 @@ class AuthTest extends TestCase
 
     public function test_user_can_login_successfully(): void
     {
-        $staffRole = Role::query()->where('slug', 'staff')->first();
+        $staffRole = Role::query()->where('slug', 'barangay_staff')->first();
         $user = User::query()->create([
             'role_id' => $staffRole->id,
             'name' => 'Test User',
             'email' => 'test@example.com',
             'password' => Hash::make('password123'),
             'is_active' => true,
+            'email_verified_at' => now(),
         ]);
 
         $payload = [
             'email' => 'test@example.com',
             'password' => 'password123',
+            'portal' => 'staff',
         ];
 
         $response = $this->postJson('/api/v1/auth/login', $payload);
@@ -136,7 +280,7 @@ class AuthTest extends TestCase
 
     public function test_login_fails_with_incorrect_credentials(): void
     {
-        $staffRole = Role::query()->where('slug', 'staff')->first();
+        $staffRole = Role::query()->where('slug', 'barangay_staff')->first();
         User::query()->create([
             'role_id' => $staffRole->id,
             'name' => 'Test User',
@@ -148,6 +292,7 @@ class AuthTest extends TestCase
         $payload = [
             'email' => 'test@example.com',
             'password' => 'wrongpassword',
+            'portal' => 'staff',
         ];
 
         $response = $this->postJson('/api/v1/auth/login', $payload);
@@ -158,7 +303,7 @@ class AuthTest extends TestCase
 
     public function test_deactivated_user_cannot_login(): void
     {
-        $staffRole = Role::query()->where('slug', 'staff')->first();
+        $staffRole = Role::query()->where('slug', 'barangay_staff')->first();
         User::query()->create([
             'role_id' => $staffRole->id,
             'name' => 'Deactivated User',
@@ -170,19 +315,20 @@ class AuthTest extends TestCase
         $payload = [
             'email' => 'deactivated@example.com',
             'password' => 'password123',
+            'portal' => 'staff',
         ];
 
         $response = $this->postJson('/api/v1/auth/login', $payload);
 
         $response->assertStatus(422)
             ->assertJsonFragment([
-                'email' => ['This account has been deactivated. Contact your administrator.']
+                'email' => ['This account has been deactivated. Contact your administrator.'],
             ]);
     }
 
     public function test_authenticated_user_can_retrieve_profile(): void
     {
-        $staffRole = Role::query()->where('slug', 'staff')->first();
+        $staffRole = Role::query()->where('slug', 'barangay_staff')->first();
         $user = User::query()->create([
             'role_id' => $staffRole->id,
             'name' => 'Profile User',
@@ -223,7 +369,7 @@ class AuthTest extends TestCase
 
     public function test_user_can_logout_successfully(): void
     {
-        $staffRole = Role::query()->where('slug', 'staff')->first();
+        $staffRole = Role::query()->where('slug', 'barangay_staff')->first();
         $user = User::query()->create([
             'role_id' => $staffRole->id,
             'name' => 'Logout User',
@@ -236,7 +382,7 @@ class AuthTest extends TestCase
         $token = $user->createToken('test-token')->plainTextToken;
 
         $response = $this->withHeaders([
-            'Authorization' => 'Bearer ' . $token,
+            'Authorization' => 'Bearer '.$token,
         ])->postJson('/api/v1/auth/logout');
 
         $response->assertStatus(200)
@@ -253,5 +399,156 @@ class AuthTest extends TestCase
             'user_id' => $user->id,
             'event' => 'auth.logout',
         ]);
+    }
+
+    public function test_verified_resident_login_requires_fresh_verification_code(): void
+    {
+        Notification::fake();
+
+        $residentRole = Role::query()->where('slug', 'resident')->first();
+        $user = User::query()->create([
+            'role_id' => $residentRole->id,
+            'name' => 'Returning Resident',
+            'email' => 'returning@example.com',
+            'phone' => '09151116666',
+            'password' => Hash::make('password123'),
+            'is_active' => true,
+            'email_verified_at' => now()->subDay(),
+        ]);
+
+        $response = $this->postJson('/api/v1/auth/login', [
+            'email' => 'returning@example.com',
+            'password' => 'password123',
+            'portal' => 'resident',
+        ]);
+
+        // A verified resident still receives a fresh code and no token on login
+        $response->assertStatus(200)
+            ->assertJsonFragment([
+                'verification_required' => true,
+                'verification_channel' => 'email',
+            ])
+            ->assertJsonMissingPath('data.token');
+
+        Notification::assertSentTo($user, SendVerificationCode::class);
+
+        // The resident must enter the freshly issued code before a token is granted
+        $code = Notification::sent($user, SendVerificationCode::class)->first()->code;
+
+        $this->postJson('/api/v1/auth/verify', [
+            'email' => $user->email,
+            'code' => $code,
+        ])->assertStatus(200)->assertJsonStructure(['data' => ['token']]);
+
+        // A wrong code is rejected even though the email was already verified
+        $this->postJson('/api/v1/auth/login', [
+            'email' => 'returning@example.com',
+            'password' => 'password123',
+            'portal' => 'resident',
+        ])->assertStatus(200);
+
+        $this->postJson('/api/v1/auth/verify', [
+            'email' => $user->email,
+            'code' => '000000',
+        ])->assertStatus(422)->assertJsonValidationErrors(['code']);
+    }
+
+    public function test_staff_login_is_not_blocked_by_resident_verification(): void
+    {
+        Notification::fake();
+
+        $staffRole = Role::query()->where('slug', 'barangay_staff')->first();
+        $user = User::query()->create([
+            'role_id' => $staffRole->id,
+            'name' => 'Verified Staff',
+            'email' => 'staffverified@example.com',
+            'password' => Hash::make('password123'),
+            'is_active' => true,
+            'email_verified_at' => now(),
+        ]);
+
+        $this->postJson('/api/v1/auth/login', [
+            'email' => 'staffverified@example.com',
+            'password' => 'password123',
+            'portal' => 'staff',
+        ])->assertStatus(200)->assertJsonStructure(['data' => ['token']]);
+
+        Notification::assertNothingSent();
+    }
+
+    public function test_resident_cannot_login_through_staff_portal(): void
+    {
+        Notification::fake();
+
+        $residentRole = Role::query()->where('slug', 'resident')->first();
+        User::query()->create([
+            'role_id' => $residentRole->id,
+            'name' => 'Resident Portal User',
+            'email' => 'resident.portal@example.com',
+            'phone' => '09151117777',
+            'password' => Hash::make('password123'),
+            'is_active' => true,
+            'email_verified_at' => now(),
+        ]);
+
+        $response = $this->postJson('/api/v1/auth/login', [
+            'email' => 'resident.portal@example.com',
+            'password' => 'password123',
+            'portal' => 'staff',
+        ]);
+
+        $response->assertStatus(422)
+            ->assertJsonValidationErrors(['email'])
+            ->assertJsonFragment([
+                'email' => ['This account is a resident. Residents must sign in through the resident portal.'],
+            ]);
+
+        Notification::assertNothingSent();
+    }
+
+    public function test_staff_cannot_login_through_resident_portal(): void
+    {
+        $staffRole = Role::query()->where('slug', 'barangay_staff')->first();
+        User::query()->create([
+            'role_id' => $staffRole->id,
+            'name' => 'Staff Portal User',
+            'email' => 'staff.portal@example.com',
+            'password' => Hash::make('password123'),
+            'is_active' => true,
+            'email_verified_at' => now(),
+        ]);
+
+        $response = $this->postJson('/api/v1/auth/login', [
+            'email' => 'staff.portal@example.com',
+            'password' => 'password123',
+            'portal' => 'resident',
+        ]);
+
+        $response->assertStatus(422)
+            ->assertJsonValidationErrors(['email'])
+            ->assertJsonFragment([
+                'email' => ['This account is an internal account. Barangay personnel must sign in through the internal portal.'],
+            ]);
+    }
+
+    public function test_login_requires_portal_field(): void
+    {
+        $staffRole = Role::query()->where('slug', 'barangay_staff')->first();
+        User::query()->create([
+            'role_id' => $staffRole->id,
+            'name' => 'No Portal User',
+            'email' => 'noportal@example.com',
+            'password' => Hash::make('password123'),
+            'is_active' => true,
+            'email_verified_at' => now(),
+        ]);
+
+        $response = $this->postJson('/api/v1/auth/login', [
+            'email' => 'noportal@example.com',
+            'password' => 'password123',
+        ]);
+
+        $response->assertStatus(422)
+            ->assertJsonValidationErrors(['portal']);
     }
 }

@@ -44,7 +44,7 @@ class InspectionReportResource extends JsonResource
             'status' => $this->status,
             'overall_assessment' => $this->overall_assessment,
             'recommendations' => $this->recommendations,
-            'establishment' => new EstablishmentResource($this->whenLoaded('establishment')),
+            'establishment' => $this->whenLoaded('establishment', fn () => $this->establishment ? new EstablishmentResource($this->establishment) : null),
             'inspector' => new UserResource($this->whenLoaded('inspector')),
             'schedule' => new InspectionScheduleResource($this->whenLoaded('schedule')),
             'summary' => [

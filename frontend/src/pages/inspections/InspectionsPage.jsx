@@ -9,6 +9,7 @@ import {
   Search,
   Trash2,
 } from 'lucide-react'
+import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { toast } from 'sonner'
 
 import { useAuth } from '@/context/AuthContext'
@@ -138,7 +139,6 @@ export default function InspectionsPage() {
   })
   const [searchInput, setSearchInput] = useState('')
   const [selectedDate, setSelectedDate] = useState(new Date())
-  const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState(null)
@@ -161,7 +161,7 @@ export default function InspectionsPage() {
   const [reportSubmitting, setReportSubmitting] = useState(false)
 
   const roleSlug = user?.role?.slug
-  const canWrite = ['administrator', 'health_officer'].includes(roleSlug)
+  const canWrite = ['administrator', 'barangay_staff'].includes(roleSlug)
   const canArchive = roleSlug === 'administrator'
 
   const queryParams = useMemo(
@@ -180,36 +180,37 @@ export default function InspectionsPage() {
     (schedule) => schedule.scheduled_date === selectedDateKey,
   )
 
-  async function loadOptions() {
-    try {
-      const response = await fetchInspectionOptions()
-      setEstablishments(response.data.establishments ?? [])
-      setInspectors(response.data.inspectors ?? [])
-    } catch (error) {
-      toast.error('Unable to load scheduling options')
-      console.error(error)
-    }
-  }
+  const optionsQuery = useQuery({
+    queryKey: ['inspection-options'],
+    queryFn: fetchInspectionOptions,
+  })
 
-  async function loadSchedules() {
-    setLoading(true)
-
-    try {
-      const response = await fetchInspectionSchedules(queryParams)
-      const registry = response.data.schedules ?? []
-      setSchedules(registry.data ?? registry)
-      setMeta(response.data.meta ?? { current_page: 1, last_page: 1, total: 0 })
-    } catch (error) {
-      toast.error('Unable to load inspection schedules')
-      console.error(error)
-    } finally {
-      setLoading(false)
-    }
-  }
+  const schedulesQuery = useQuery({
+    queryKey: ['inspection-schedules', queryParams],
+    queryFn: async () => fetchInspectionSchedules(queryParams),
+    placeholderData: keepPreviousData,
+  })
 
   useEffect(() => {
-    loadOptions()
-  }, [])
+    if (optionsQuery.isError) {
+      toast.error('Unable to load scheduling options')
+      console.error(optionsQuery.error)
+    }
+  }, [optionsQuery.error, optionsQuery.isError])
+
+  useEffect(() => {
+    if (schedulesQuery.isError) {
+      toast.error('Unable to load inspection schedules')
+      console.error(schedulesQuery.error)
+    }
+  }, [schedulesQuery.error, schedulesQuery.isError])
+
+  useEffect(() => {
+    if (optionsQuery.data) {
+      setEstablishments(optionsQuery.data.data.establishments ?? [])
+      setInspectors(optionsQuery.data.data.inspectors ?? [])
+    }
+  }, [optionsQuery.data])
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
@@ -224,15 +225,22 @@ export default function InspectionsPage() {
           page: 1,
         }
       })
-    }, 300)
+    }, 150)
 
     return () => window.clearTimeout(timeout)
   }, [searchInput])
 
   useEffect(() => {
-    loadSchedules()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [queryParams])
+    if (schedulesQuery.data) {
+      const registry = schedulesQuery.data.data.schedules ?? []
+      setSchedules(registry.data ?? registry)
+      setMeta(
+        schedulesQuery.data.data.meta ?? { current_page: 1, last_page: 1, total: 0 },
+      )
+    }
+  }, [schedulesQuery.data])
+
+  const loading = schedulesQuery.isLoading && schedules.length === 0
 
   function updateFilter(key, value) {
     setFilters((current) => ({
@@ -274,7 +282,7 @@ export default function InspectionsPage() {
   function normalizePayload() {
     return {
       ...form,
-      establishment_id: Number(form.establishment_id),
+      establishment_id: form.establishment_id ? Number(form.establishment_id) : null,
       inspector_id: Number(form.inspector_id),
       scheduled_time: form.scheduled_time || null,
     }
@@ -295,7 +303,7 @@ export default function InspectionsPage() {
       }
 
       setDialogOpen(false)
-      await loadSchedules()
+      await schedulesQuery.refetch()
     } catch (error) {
       const validationErrors = error.response?.data?.errors
 
@@ -324,7 +332,7 @@ export default function InspectionsPage() {
     try {
       await deleteInspectionSchedule(schedule.id)
       toast.success('Inspection schedule archived')
-      await loadSchedules()
+      await schedulesQuery.refetch()
     } catch (error) {
       toast.error('Unable to archive inspection schedule')
       console.error(error)
@@ -465,7 +473,12 @@ export default function InspectionsPage() {
     <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="text-2xl font-semibold tracking-tight">Inspections</h2>
+          <div className="flex items-center gap-2">
+            <h2 className="text-2xl font-semibold tracking-tight">Inspections</h2>
+            {schedulesQuery.isFetching && !loading && (
+              <span className="text-xs text-muted-foreground">Refreshing...</span>
+            )}
+          </div>
           <p className="text-sm text-muted-foreground">
             Schedule inspections, assign inspectors, and track inspection status
           </p>

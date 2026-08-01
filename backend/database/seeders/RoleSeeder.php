@@ -16,9 +16,9 @@ class RoleSeeder extends Seeder
                 'description' => 'Full system access and user management',
             ],
             [
-                'name' => 'Health Officer',
-                'slug' => 'health_officer',
-                'description' => 'Oversees health inspections and certifications',
+                'name' => 'Barangay Staff',
+                'slug' => 'barangay_staff',
+                'description' => 'Reviews applications, assigns inspectors, manages clearances',
             ],
             [
                 'name' => 'Inspector',
@@ -26,9 +26,9 @@ class RoleSeeder extends Seeder
                 'description' => 'Conducts field inspections and compliance checks',
             ],
             [
-                'name' => 'Staff',
-                'slug' => 'staff',
-                'description' => 'Barangay staff with limited access',
+                'name' => 'Resident',
+                'slug' => 'resident',
+                'description' => 'Registered resident who submits inspection requests',
             ],
         ];
 

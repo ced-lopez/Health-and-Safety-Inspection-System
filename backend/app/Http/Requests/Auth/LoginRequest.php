@@ -16,6 +16,9 @@ class LoginRequest extends FormRequest
         return [
             'email' => ['required', 'email'],
             'password' => ['required', 'string'],
+            // The portal the request came from: 'resident' (/login) or 'staff' (/admin/login).
+            // The backend enforces that the authenticated role matches the portal.
+            'portal' => ['required', 'string', 'in:resident,staff'],
         ];
     }
 }

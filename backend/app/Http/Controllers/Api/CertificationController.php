@@ -7,21 +7,32 @@ use App\Http\Requests\Certification\UpdateIssuanceRequest;
 use App\Http\Resources\CertificationResource;
 use App\Http\Resources\ClearanceResource;
 use App\Http\Resources\EstablishmentResource;
+use App\Http\Resources\QrCodeResource;
 use App\Models\Certification;
 use App\Models\Clearance;
 use App\Models\Establishment;
 use App\Models\Inspection;
 use App\Models\QrCode;
+use App\Services\AuditLogger;
+use App\Services\DocumentPdfService;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Symfony\Component\HttpFoundation\Response;
 
 class CertificationController extends BaseApiController
 {
+    public function __construct(private readonly DocumentPdfService $pdfService) {}
+
     public function index(Request $request): JsonResponse
     {
         $kind = $request->input('document_kind', 'all');
+        $perKindLimit = min($request->integer('per_page', 25), 50);
+        $search = $request->filled('search')
+            ? strtolower($request->string('search')->trim()->toString())
+            : null;
         $documents = collect();
 
         if ($kind === 'all' || $kind === 'certification') {
@@ -29,6 +40,10 @@ class CertificationController extends BaseApiController
                 Certification::query()
                     ->with(['establishment', 'inspection', 'issuer.role', 'qrCode'])
                     ->when($request->filled('status') && $request->input('status') !== 'all', fn ($query) => $query->where('status', $request->input('status')))
+                    ->when($search, fn ($query) => $this->applyCertificationSearch($query, $search))
+                    ->orderByDesc('issue_date')
+                    ->orderByDesc('id')
+                    ->limit($perKindLimit)
                     ->get()
                     ->map(fn ($certification) => (new CertificationResource($certification))->resolve())
             );
@@ -39,23 +54,18 @@ class CertificationController extends BaseApiController
                 Clearance::query()
                     ->with(['establishment', 'inspection', 'issuer.role', 'qrCode'])
                     ->when($request->filled('status') && $request->input('status') !== 'all', fn ($query) => $query->where('status', $request->input('status')))
+                    ->when($search, fn ($query) => $this->applyClearanceSearch($query, $search))
+                    ->orderByDesc('issue_date')
+                    ->orderByDesc('id')
+                    ->limit($perKindLimit)
                     ->get()
                     ->map(fn ($clearance) => (new ClearanceResource($clearance))->resolve())
             );
         }
 
-        if ($request->filled('search')) {
-            $search = strtolower($request->string('search')->trim()->toString());
-            $documents = $documents->filter(function ($document) use ($search) {
-                return str_contains(strtolower($document['number'] ?? ''), $search)
-                    || str_contains(strtolower($document['document_type'] ?? ''), $search)
-                    || str_contains(strtolower($document['establishment']['name'] ?? ''), $search)
-                    || str_contains(strtolower($document['establishment']['registration_number'] ?? ''), $search);
-            });
-        }
-
         $documents = $documents
             ->sortByDesc(fn ($document) => $document['issue_date'] ?? $document['created_at'])
+            ->take($perKindLimit)
             ->values();
 
         return $this->success([
@@ -64,6 +74,38 @@ class CertificationController extends BaseApiController
                 'total' => $documents->count(),
             ],
         ], 'Certification and clearance documents listed successfully');
+    }
+
+    private function applyCertificationSearch($query, string $search): void
+    {
+        $like = "%{$search}%";
+
+        $query->where(function ($documentQuery) use ($like) {
+            $documentQuery
+                ->whereRaw('LOWER(certificate_number) LIKE ?', [$like])
+                ->orWhereRaw('LOWER(certificate_type) LIKE ?', [$like])
+                ->orWhereHas('establishment', function ($establishmentQuery) use ($like) {
+                    $establishmentQuery
+                        ->whereRaw('LOWER(name) LIKE ?', [$like])
+                        ->orWhereRaw('LOWER(registration_number) LIKE ?', [$like]);
+                });
+        });
+    }
+
+    private function applyClearanceSearch($query, string $search): void
+    {
+        $like = "%{$search}%";
+
+        $query->where(function ($documentQuery) use ($like) {
+            $documentQuery
+                ->whereRaw('LOWER(clearance_number) LIKE ?', [$like])
+                ->orWhereRaw('LOWER(clearance_type) LIKE ?', [$like])
+                ->orWhereHas('establishment', function ($establishmentQuery) use ($like) {
+                    $establishmentQuery
+                        ->whereRaw('LOWER(name) LIKE ?', [$like])
+                        ->orWhereRaw('LOWER(registration_number) LIKE ?', [$like]);
+                });
+        });
     }
 
     public function options(): JsonResponse
@@ -100,32 +142,46 @@ class CertificationController extends BaseApiController
     public function store(StoreIssuanceRequest $request): JsonResponse
     {
         $validated = $request->validated();
-        $document = $validated['document_kind'] === 'certification'
-            ? Certification::query()->create([
-                'establishment_id' => $validated['establishment_id'],
-                'inspection_id' => $validated['inspection_id'] ?? null,
-                'issued_by' => $request->user()->id,
-                'certificate_number' => $this->nextNumber('CERT'),
-                'certificate_type' => $validated['document_type'],
-                'issue_date' => $validated['issue_date'],
-                'expiration_date' => $validated['expiration_date'] ?? null,
-                'status' => $validated['status'],
-                'notes' => $validated['notes'] ?? null,
-            ])
-            : Clearance::query()->create([
-                'establishment_id' => $validated['establishment_id'],
-                'inspection_id' => $validated['inspection_id'] ?? null,
-                'issued_by' => $request->user()->id,
-                'clearance_number' => $this->nextNumber('CLR'),
-                'clearance_type' => $validated['document_type'],
-                'purpose' => $validated['purpose'] ?? null,
-                'issue_date' => $validated['issue_date'],
-                'expiration_date' => $validated['expiration_date'] ?? null,
-                'status' => $validated['status'],
-                'notes' => $validated['notes'] ?? null,
-            ]);
 
-        $this->ensureQrCode($document, strtoupper($validated['document_kind']));
+        $document = DB::transaction(function () use ($request, $validated) {
+            $document = $validated['document_kind'] === 'certification'
+                ? Certification::query()->create([
+                    'establishment_id' => $validated['establishment_id'],
+                    'inspection_id' => $validated['inspection_id'] ?? null,
+                    'issued_by' => $request->user()->id,
+                    'certificate_number' => $this->nextNumber('CERT'),
+                    'certificate_type' => $validated['document_type'],
+                    'issue_date' => $validated['issue_date'],
+                    'expiration_date' => $validated['expiration_date'] ?? null,
+                    'status' => $validated['status'],
+                    'notes' => $validated['notes'] ?? null,
+                ])
+                : Clearance::query()->create([
+                    'establishment_id' => $validated['establishment_id'],
+                    'inspection_id' => $validated['inspection_id'] ?? null,
+                    'issued_by' => $request->user()->id,
+                    'clearance_number' => $this->nextNumber('CLR'),
+                    'clearance_type' => $validated['document_type'],
+                    'purpose' => $validated['purpose'] ?? null,
+                    'issue_date' => $validated['issue_date'],
+                    'expiration_date' => $validated['expiration_date'] ?? null,
+                    'status' => $validated['status'],
+                    'notes' => $validated['notes'] ?? null,
+                ]);
+
+            $this->ensureQrCode($document, strtoupper($validated['document_kind']));
+
+            return $document;
+        });
+
+        $this->logDocumentEvent(
+            $document,
+            $this->moduleFor($document),
+            'Issued',
+            'Issued '.$this->numberFor($document),
+            [],
+            $request,
+        );
 
         return $this->success(
             $this->resourceFor($document),
@@ -160,6 +216,15 @@ class CertificationController extends BaseApiController
 
         $this->ensureQrCode($document, strtoupper($kind));
 
+        $this->logDocumentEvent(
+            $document,
+            $this->moduleFor($document),
+            'Updated',
+            'Updated '.$this->numberFor($document),
+            [],
+            $request,
+        );
+
         return $this->success(
             $this->resourceFor($document),
             'Document updated successfully'
@@ -171,6 +236,147 @@ class CertificationController extends BaseApiController
         $this->findDocument($kind, $id)->delete();
 
         return $this->success(null, 'Document archived successfully');
+    }
+
+    public function downloadPdf(Request $request, string $kind, int $id): Response
+    {
+        $document = $this->findDocument($kind, $id);
+
+        $filename = $document instanceof Clearance
+            ? 'clearance-'.$document->clearance_number.'.pdf'
+            : 'certificate-'.$document->certificate_number.'.pdf';
+
+        $this->logDocumentEvent(
+            $document,
+            $this->moduleFor($document),
+            'Downloaded',
+            'Downloaded '.$this->numberFor($document),
+            [],
+            $request,
+            "{$kind}.downloaded",
+        );
+
+        return $this->pdfService->pdf($document)->stream($filename);
+    }
+
+    public function approve(Request $request, string $kind, int $id): JsonResponse
+    {
+        $document = $this->findDocument($kind, $id);
+
+        if (! in_array($document->status, ['pending', 'expired'], true)) {
+            return $this->error('Only pending or expired documents can be approved.', 422);
+        }
+
+        $document->update(['status' => 'active']);
+        $document->qrCode?->update(['is_active' => true]);
+
+        $this->logDocumentEvent(
+            $document,
+            $this->moduleFor($document),
+            'Approved',
+            'Approved '.$this->numberFor($document),
+            ['status' => 'active'],
+            $request,
+            $kind.'.approved',
+        );
+
+        return $this->success(
+            $this->resourceFor($document),
+            'Document approved successfully'
+        );
+    }
+
+    public function revoke(Request $request, string $kind, int $id): JsonResponse
+    {
+        $document = $this->findDocument($kind, $id);
+
+        if ($document->status !== 'active') {
+            return $this->error('Only active documents can be revoked.', 422);
+        }
+
+        $document->update(['status' => 'revoked']);
+        $document->qrCode?->update(['is_active' => false]);
+
+        $this->logDocumentEvent(
+            $document,
+            $this->moduleFor($document),
+            'Revoked',
+            'Revoked '.$this->numberFor($document),
+            ['status' => 'revoked'],
+            $request,
+            $kind.'.revoked',
+        );
+
+        return $this->success(
+            $this->resourceFor($document),
+            'Document revoked successfully'
+        );
+    }
+
+    public function renew(Request $request, string $kind, int $id): JsonResponse
+    {
+        $document = $this->findDocument($kind, $id);
+
+        $validated = $request->validate([
+            'status' => ['nullable', 'string', 'in:pending,active'],
+        ]);
+
+        $renewed = DB::transaction(function () use ($document, $kind, $request, $validated) {
+            if (in_array($document->status, ['active', 'expired'], true)) {
+                $document->update(['status' => 'expired']);
+                $document->qrCode?->update(['is_active' => false]);
+            }
+
+            $issueDate = now();
+
+            $renewed = $document instanceof Clearance
+                ? Clearance::query()->create([
+                    'establishment_id' => $document->establishment_id,
+                    'inspection_id' => $document->inspection_id,
+                    'issued_by' => $request->user()->id,
+                    'clearance_number' => $this->nextNumber('CLR'),
+                    'clearance_type' => $document->clearance_type,
+                    'purpose' => $document->purpose,
+                    'issue_date' => $issueDate->toDateString(),
+                    'expiration_date' => $issueDate->copy()->addYear()->toDateString(),
+                    'status' => $validated['status'] ?? 'active',
+                    'notes' => 'Renewed from '.$document->clearance_number,
+                ])
+                : Certification::query()->create([
+                    'establishment_id' => $document->establishment_id,
+                    'inspection_id' => $document->inspection_id,
+                    'issued_by' => $request->user()->id,
+                    'certificate_number' => $this->nextNumber('CERT'),
+                    'certificate_type' => $document->certificate_type,
+                    'issue_date' => $issueDate->toDateString(),
+                    'expiration_date' => $issueDate->copy()->addYear()->toDateString(),
+                    'status' => $validated['status'] ?? 'active',
+                    'notes' => 'Renewed from '.$document->certificate_number,
+                ]);
+
+            $this->ensureQrCode($renewed, strtoupper($kind));
+
+            return $renewed;
+        });
+
+        $this->logDocumentEvent(
+            $renewed,
+            $this->moduleFor($renewed),
+            'Renewed',
+            'Renewed '.$this->numberFor($document).' -> '.$this->numberFor($renewed),
+            [
+                'new_id' => $renewed->id,
+                'new_number' => $renewed instanceof Clearance ? $renewed->clearance_number : $renewed->certificate_number,
+            ],
+            $request,
+            $kind.'.renewed',
+        );
+
+        return $this->success(
+            $this->resourceFor($renewed),
+            'Document renewed successfully',
+            201
+        );
     }
 
     public function verify(string $code): JsonResponse
@@ -187,8 +393,18 @@ class CertificationController extends BaseApiController
         $qrCode->increment('verification_count');
         $qrCode->update(['last_verified_at' => now()]);
 
+        AuditLogger::log(
+            null,
+            'QR Verification',
+            'Verified',
+            "QR code {$qrCode->code} verified for ".$this->numberFor($qrCode->qrable),
+            $qrCode->qrable,
+            request(),
+            event: 'qr.verified',
+        );
+
         return $this->success([
-            'qr_code' => new \App\Http\Resources\QrCodeResource($qrCode->refresh()),
+            'qr_code' => new QrCodeResource($qrCode->refresh()),
             'document' => $this->resourceFor($qrCode->qrable),
         ], 'Document verified successfully');
     }
@@ -218,7 +434,7 @@ class CertificationController extends BaseApiController
         }
 
         $document->qrCode()->create([
-            'code' => $prefix . '-' . Str::upper(Str::random(12)),
+            'code' => $prefix.'-'.Str::upper(Str::random(12)),
             'is_active' => true,
         ]);
     }
@@ -226,5 +442,38 @@ class CertificationController extends BaseApiController
     private function nextNumber(string $prefix): string
     {
         return sprintf('%s-%s-%04d', $prefix, now()->format('Ymd'), random_int(1, 9999));
+    }
+
+    private function moduleFor(Model $document): string
+    {
+        return $document instanceof Clearance ? 'Clearance' : 'Certification';
+    }
+
+    private function numberFor(Model $document): string
+    {
+        return $document instanceof Clearance
+            ? "clearance {$document->clearance_number}"
+            : "certificate {$document->certificate_number}";
+    }
+
+    private function logDocumentEvent(
+        Model $document,
+        string $module,
+        string $action,
+        string $description,
+        array $newValues = [],
+        ?Request $request = null,
+        ?string $event = null,
+    ): void {
+        AuditLogger::log(
+            $request?->user(),
+            $module,
+            $action,
+            $description,
+            $document,
+            $request,
+            newValues: $newValues,
+            event: $event,
+        );
     }
 }

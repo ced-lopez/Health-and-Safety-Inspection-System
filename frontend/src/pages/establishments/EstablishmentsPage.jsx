@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Edit, Plus, Search, Trash2 } from 'lucide-react'
+import { Check, Edit, Plus, Search, Trash2, X } from 'lucide-react'
+import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 
 import { useAuth } from '@/context/AuthContext'
@@ -32,9 +33,12 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import {
+  approveClaim,
   createEstablishment,
   deleteEstablishment,
   fetchEstablishments,
+  fetchPendingClaims,
+  rejectClaim,
   updateEstablishment,
 } from '@/services/establishmentService'
 
@@ -71,6 +75,7 @@ function statusVariant(status) {
 
 export default function EstablishmentsPage() {
   const { user } = useAuth()
+  const queryClient = useQueryClient()
   const [establishments, setEstablishments] = useState([])
   const [businessTypes, setBusinessTypes] = useState([])
   const [meta, setMeta] = useState({
@@ -84,7 +89,6 @@ export default function EstablishmentsPage() {
     business_type: 'all',
     page: 1,
   })
-  const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState(null)
@@ -92,8 +96,33 @@ export default function EstablishmentsPage() {
   const [errors, setErrors] = useState({})
 
   const roleSlug = user?.role?.slug
-  const canWrite = ['administrator', 'health_officer'].includes(roleSlug)
+  const canWrite = ['administrator', 'barangay_staff'].includes(roleSlug)
   const canArchive = roleSlug === 'administrator'
+
+  const claimsQuery = useQuery({
+    queryKey: ['establishment-claims'],
+    queryFn: async () => {
+      const response = await fetchPendingClaims()
+      return response.data ?? []
+    },
+    enabled: canWrite,
+  })
+
+  async function handleClaimReview(establishment, action) {
+    try {
+      if (action === 'approve') {
+        await approveClaim(establishment.id)
+        toast.success(`${establishment.name} claim approved`)
+      } else {
+        await rejectClaim(establishment.id)
+        toast.success(`${establishment.name} claim rejected`)
+      }
+      await claimsQuery.refetch()
+      await queryClient.invalidateQueries({ queryKey: ['establishments'] })
+    } catch (error) {
+      toast.error(error.response?.data?.message || 'Unable to review claim')
+    }
+  }
 
   const queryParams = useMemo(
     () => ({
@@ -106,28 +135,34 @@ export default function EstablishmentsPage() {
     [filters],
   )
 
-  async function loadEstablishments() {
-    setLoading(true)
-
-    try {
-      const response = await fetchEstablishments(queryParams)
-      const registry = response.data.establishments ?? []
-
-      setEstablishments(registry.data ?? registry)
-      setBusinessTypes(response.data.business_types ?? [])
-      setMeta(response.data.meta ?? { current_page: 1, last_page: 1, total: 0 })
-    } catch (error) {
-      toast.error('Unable to load establishments')
-      console.error(error)
-    } finally {
-      setLoading(false)
-    }
-  }
+  const establishmentsQuery = useQuery({
+    queryKey: ['establishments', queryParams],
+    queryFn: async () => fetchEstablishments(queryParams),
+    placeholderData: keepPreviousData,
+  })
 
   useEffect(() => {
-    loadEstablishments()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [queryParams])
+    if (establishmentsQuery.isError) {
+      toast.error('Unable to load establishments')
+      console.error(establishmentsQuery.error)
+    }
+  }, [establishmentsQuery.error, establishmentsQuery.isError])
+
+  useEffect(() => {
+    const response = establishmentsQuery.data
+
+    if (!response) {
+      return
+    }
+
+    const registry = response.data.establishments ?? []
+
+    setEstablishments(registry.data ?? registry)
+    setBusinessTypes(response.data.business_types ?? [])
+    setMeta(response.data.meta ?? { current_page: 1, last_page: 1, total: 0 })
+  }, [establishmentsQuery.data])
+
+  const loading = establishmentsQuery.isLoading && establishments.length === 0
 
   function updateFilter(key, value) {
     setFilters((current) => ({
@@ -190,7 +225,7 @@ export default function EstablishmentsPage() {
       }
 
       setDialogOpen(false)
-      await loadEstablishments()
+      await establishmentsQuery.refetch()
     } catch (error) {
       const validationErrors = error.response?.data?.errors
 
@@ -219,7 +254,7 @@ export default function EstablishmentsPage() {
     try {
       await deleteEstablishment(establishment.id)
       toast.success('Establishment archived')
-      await loadEstablishments()
+      await establishmentsQuery.refetch()
     } catch (error) {
       toast.error('Unable to archive establishment')
       console.error(error)
@@ -230,7 +265,12 @@ export default function EstablishmentsPage() {
     <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="text-2xl font-semibold tracking-tight">Establishments</h2>
+          <div className="flex items-center gap-2">
+            <h2 className="text-2xl font-semibold tracking-tight">Establishments</h2>
+            {establishmentsQuery.isFetching && !loading && (
+              <span className="text-xs text-muted-foreground">Refreshing...</span>
+            )}
+          </div>
           <p className="text-sm text-muted-foreground">
             Manage registered business establishments in Barangay 178
           </p>
@@ -242,6 +282,76 @@ export default function EstablishmentsPage() {
           </Button>
         )}
       </div>
+
+      {canWrite && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Pending Claims</CardTitle>
+            <CardDescription>
+              Resident establishment link requests awaiting your review
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {claimsQuery.isLoading ? (
+              <div className="space-y-3">
+                <Skeleton className="h-10 w-full" />
+                <Skeleton className="h-10 w-full" />
+              </div>
+            ) : (claimsQuery.data ?? []).length === 0 ? (
+              <p className="py-6 text-center text-sm text-muted-foreground">
+                No pending establishment claims.
+              </p>
+            ) : (
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Business</TableHead>
+                      <TableHead>Owner</TableHead>
+                      <TableHead>Claimed By</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {(claimsQuery.data ?? []).map((establishment) => (
+                      <TableRow key={establishment.id}>
+                        <TableCell>
+                          <div className="font-medium">{establishment.name}</div>
+                          <div className="text-xs text-muted-foreground">
+                            {establishment.business_type} - {establishment.address}
+                          </div>
+                        </TableCell>
+                        <TableCell>{establishment.owner_name}</TableCell>
+                        <TableCell>{establishment.resident?.name ?? 'N/A'}</TableCell>
+                        <TableCell>
+                          <div className="flex justify-end gap-2">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handleClaimReview(establishment, 'approve')}
+                            >
+                              <Check className="size-4" />
+                              Approve
+                            </Button>
+                            <Button
+                              variant="destructive"
+                              size="sm"
+                              onClick={() => handleClaimReview(establishment, 'reject')}
+                            >
+                              <X className="size-4" />
+                              Reject
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader>

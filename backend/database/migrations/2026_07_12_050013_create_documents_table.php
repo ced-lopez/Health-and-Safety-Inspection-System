@@ -12,17 +12,13 @@ return new class extends Migration
             $table->id();
             $table->morphs('documentable');
             $table->foreignId('uploaded_by')->constrained('users')->restrictOnDelete();
-            $table->enum('document_type', [
-                'business_permit',
-                'safety_certificate',
-                'other',
-            ]);
+            $table->string('document_type');
             $table->string('file_path');
             $table->string('file_name');
             $table->string('original_name');
             $table->string('mime_type')->nullable();
             $table->unsignedBigInteger('file_size')->nullable();
-            $table->enum('status', ['pending', 'verified', 'rejected'])->default('pending');
+            $table->enum('status', ['pending', 'processed', 'verified', 'rejected'])->default('pending');
             $table->timestamps();
             $table->softDeletes();
 

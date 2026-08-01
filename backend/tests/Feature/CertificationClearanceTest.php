@@ -16,9 +16,13 @@ class CertificationClearanceTest extends TestCase
     use RefreshDatabase;
 
     protected User $admin;
-    protected User $healthOfficer;
+
+    protected User $barangayStaff;
+
     protected User $inspector;
+
     protected Establishment $establishment;
+
     protected Inspection $inspection;
 
     protected function setUp(): void
@@ -27,7 +31,7 @@ class CertificationClearanceTest extends TestCase
         $this->seed(RoleSeeder::class);
 
         $this->admin = $this->makeUser('administrator', 'admin@example.com');
-        $this->healthOfficer = $this->makeUser('health_officer', 'health@example.com');
+        $this->barangayStaff = $this->makeUser('barangay_staff', 'staff@example.com');
         $this->inspector = $this->makeUser('inspector', 'inspector@example.com');
 
         $this->establishment = Establishment::query()->create([
@@ -54,9 +58,9 @@ class CertificationClearanceTest extends TestCase
             ->assertStatus(403);
     }
 
-    public function test_health_officer_can_issue_certificate_with_qr_code(): void
+    public function test_barangay_staff_can_issue_certificate_with_qr_code(): void
     {
-        $response = $this->actingAs($this->healthOfficer, 'sanctum')
+        $response = $this->actingAs($this->barangayStaff, 'sanctum')
             ->postJson('/api/v1/certifications', [
                 'document_kind' => 'certification',
                 'establishment_id' => $this->establishment->id,
@@ -75,7 +79,7 @@ class CertificationClearanceTest extends TestCase
 
         $this->assertDatabaseHas('certifications', [
             'establishment_id' => $this->establishment->id,
-            'issued_by' => $this->healthOfficer->id,
+            'issued_by' => $this->barangayStaff->id,
             'status' => 'active',
         ]);
 

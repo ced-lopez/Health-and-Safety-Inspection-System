@@ -25,13 +25,13 @@ class EstablishmentTest extends TestCase
         $this->postJson('/api/v1/establishments', [])->assertStatus(401);
     }
 
-    public function test_staff_cannot_access_establishments(): void
+    public function test_resident_cannot_access_establishments(): void
     {
-        $staffRole = Role::query()->where('slug', 'staff')->first();
+        $residentRole = Role::query()->where('slug', 'resident')->first();
         $user = User::query()->create([
-            'role_id' => $staffRole->id,
-            'name' => 'Staff User',
-            'email' => 'staff@example.com',
+            'role_id' => $residentRole->id,
+            'name' => 'Resident User',
+            'email' => 'resident@example.com',
             'password' => bcrypt('password123'),
             'is_active' => true,
         ]);
@@ -66,12 +66,12 @@ class EstablishmentTest extends TestCase
         ])->assertStatus(403);
     }
 
-    public function test_health_officer_can_create_but_not_delete_establishments(): void
+    public function test_barangay_staff_can_create_but_not_delete_establishments(): void
     {
-        $healthOfficerRole = Role::query()->where('slug', 'health_officer')->first();
+        $barangayStaffRole = Role::query()->where('slug', 'barangay_staff')->first();
         $user = User::query()->create([
-            'role_id' => $healthOfficerRole->id,
-            'name' => 'Health Officer User',
+            'role_id' => $barangayStaffRole->id,
+            'name' => 'Barangay Staff User',
             'email' => 'health@example.com',
             'password' => bcrypt('password123'),
             'is_active' => true,

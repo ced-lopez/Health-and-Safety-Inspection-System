@@ -11,11 +11,16 @@ use App\Models\Inspection;
 use App\Models\User;
 use App\Models\Violation;
 use App\Models\ViolationEvidence;
+use App\Notifications\Concerns\NotifiesRoles;
+use App\Notifications\ViolationFiled;
+use App\Services\AuditLogger;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 class ViolationController extends BaseApiController
 {
+    use NotifiesRoles;
+
     public function index(Request $request): JsonResponse
     {
         $query = Violation::query()
@@ -31,7 +36,7 @@ class ViolationController extends BaseApiController
         }
 
         if ($request->filled('search')) {
-            $search = '%' . strtolower($request->string('search')->trim()->toString()) . '%';
+            $search = '%'.strtolower($request->string('search')->trim()->toString()).'%';
 
             $query->where(function ($q) use ($search) {
                 $q->whereRaw('LOWER(title) LIKE ?', [$search])
@@ -89,7 +94,7 @@ class ViolationController extends BaseApiController
 
         $assignees = User::query()
             ->where('is_active', true)
-            ->whereHas('role', fn ($query) => $query->whereIn('slug', ['administrator', 'health_officer', 'inspector']))
+            ->whereHas('role', fn ($query) => $query->whereIn('slug', ['administrator', 'barangay_staff', 'inspector']))
             ->with('role')
             ->orderBy('name')
             ->get();
@@ -111,6 +116,25 @@ class ViolationController extends BaseApiController
         }
 
         $violation = Violation::query()->create($payload);
+
+        AuditLogger::log(
+            $request->user(),
+            'Violations',
+            'Filed',
+            "Filed violation: {$violation->title}",
+            $violation,
+            $request,
+            newValues: [
+                'severity' => $violation->severity,
+                'status' => $violation->status,
+            ],
+        );
+
+        $this->notifyRoles(new ViolationFiled(
+            $violation->title,
+            $violation->establishment?->name ?? 'Establishment',
+            $violation->severity,
+        ), ['administrator', 'barangay_staff']);
 
         return $this->success(
             new ViolationResource($this->loadViolation($violation)),
@@ -141,7 +165,20 @@ class ViolationController extends BaseApiController
             $payload['resolved_by'] = null;
         }
 
+        $oldStatus = $violation->status;
+
         $violation->update($payload);
+
+        AuditLogger::log(
+            $request->user(),
+            'Violations',
+            'Updated',
+            "Updated violation: {$violation->title}",
+            $violation,
+            $request,
+            oldValues: ['status' => $oldStatus],
+            newValues: ['status' => $violation->status],
+        );
 
         return $this->success(
             new ViolationResource($this->loadViolation($violation)),
@@ -152,6 +189,15 @@ class ViolationController extends BaseApiController
     public function destroy(Violation $violation): JsonResponse
     {
         $violation->delete();
+
+        AuditLogger::log(
+            request()->user(),
+            'Violations',
+            'Deleted',
+            "Archived violation: {$violation->title} (ID {$violation->id})",
+            $violation,
+            request(),
+        );
 
         return $this->success(null, 'Violation archived successfully');
     }
@@ -180,6 +226,16 @@ class ViolationController extends BaseApiController
 
             $evidenceIds[] = $evidence->id;
         }
+
+        AuditLogger::log(
+            $request->user(),
+            'Violations',
+            'Evidence Uploaded',
+            'Uploaded '.count($evidenceIds)." evidence file(s) for violation: {$violation->title}",
+            $violation,
+            $request,
+            newValues: ['evidence_ids' => $evidenceIds],
+        );
 
         return $this->success(
             ViolationEvidenceResource::collection(

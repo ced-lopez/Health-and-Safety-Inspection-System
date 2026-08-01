@@ -2,20 +2,34 @@
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
-#[Fillable([
-    'document_id', 'classification', 'extracted_data',
-    'business_name', 'owner_name', 'permit_number', 'issuing_authority',
-    'date_issued', 'expiration_date', 'certificate_name', 'certificate_number',
-    'establishment_name', 'issuing_office', 'issue_date', 'is_expired',
-    'missing_requirements', 'confidence_score', 'reviewed_by',
-    'reviewed_at', 'ai_processed_at',
-])]
 class DocumentExtraction extends Model
 {
+    protected $fillable = [
+        'document_id',
+        'classification',
+        'extracted_data',
+        'business_name',
+        'owner_name',
+        'permit_number',
+        'issuing_authority',
+        'date_issued',
+        'expiration_date',
+        'certificate_name',
+        'certificate_number',
+        'establishment_name',
+        'issuing_office',
+        'issue_date',
+        'is_expired',
+        'missing_requirements',
+        'confidence_score',
+        'reviewed_by',
+        'reviewed_at',
+        'ai_processed_at',
+    ];
+
     protected function casts(): array
     {
         return [

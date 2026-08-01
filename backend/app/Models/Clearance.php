@@ -2,20 +2,27 @@
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\MorphOne;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
-#[Fillable([
-    'establishment_id', 'inspection_id', 'issued_by',
-    'clearance_number', 'clearance_type', 'purpose',
-    'issue_date', 'expiration_date', 'status', 'notes',
-])]
 class Clearance extends Model
 {
     use SoftDeletes;
+
+    protected $fillable = [
+        'establishment_id',
+        'inspection_id',
+        'issued_by',
+        'clearance_number',
+        'clearance_type',
+        'purpose',
+        'issue_date',
+        'expiration_date',
+        'status',
+        'notes',
+    ];
 
     protected function casts(): array
     {

@@ -2,20 +2,31 @@
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\MorphMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
-#[Fillable([
-    'name', 'business_type', 'owner_name', 'address', 'barangay',
-    'contact_number', 'email', 'registration_number', 'status',
-    'latitude', 'longitude',
-])]
 class Establishment extends Model
 {
     use SoftDeletes;
+
+    protected $fillable = [
+        'name',
+        'business_type',
+        'owner_name',
+        'address',
+        'barangay',
+        'contact_number',
+        'email',
+        'registration_number',
+        'status',
+        'resident_id',
+        'ownership_status',
+        'latitude',
+        'longitude',
+    ];
 
     protected function casts(): array
     {
@@ -23,6 +34,11 @@ class Establishment extends Model
             'latitude' => 'decimal:7',
             'longitude' => 'decimal:7',
         ];
+    }
+
+    public function resident(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'resident_id');
     }
 
     public function inspectionSchedules(): HasMany

@@ -2,11 +2,15 @@
 
 namespace Tests\Feature;
 
+use App\Models\ApplicationType;
 use App\Models\Establishment;
 use App\Models\Inspection;
+use App\Models\InspectionCategory;
+use App\Models\InspectionRequest;
 use App\Models\InspectionSchedule;
 use App\Models\Role;
 use App\Models\User;
+use Database\Seeders\InspectionTaxonomySeeder;
 use Database\Seeders\RoleSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
@@ -16,17 +20,20 @@ class InspectionScheduleTest extends TestCase
     use RefreshDatabase;
 
     protected User $admin;
-    protected User $healthOfficer;
+
+    protected User $barangayStaff;
+
     protected User $inspector;
+
     protected Establishment $establishment;
 
     protected function setUp(): void
     {
         parent::setUp();
-        $this->seed(RoleSeeder::class);
+        $this->seed([RoleSeeder::class, InspectionTaxonomySeeder::class]);
 
         $this->admin = $this->makeUser('administrator', 'admin@example.com');
-        $this->healthOfficer = $this->makeUser('health_officer', 'health@example.com');
+        $this->barangayStaff = $this->makeUser('barangay_staff', 'staff@example.com');
         $this->inspector = $this->makeUser('inspector', 'inspector@example.com');
         $this->establishment = Establishment::query()->create([
             'name' => 'North Market',
@@ -43,9 +50,9 @@ class InspectionScheduleTest extends TestCase
         $this->getJson('/api/v1/inspections/schedules')->assertStatus(401);
     }
 
-    public function test_health_officer_can_create_schedule_and_linked_inspection(): void
+    public function test_barangay_staff_can_create_schedule_and_linked_inspection(): void
     {
-        $response = $this->actingAs($this->healthOfficer, 'sanctum')
+        $response = $this->actingAs($this->barangayStaff, 'sanctum')
             ->postJson('/api/v1/inspections/schedules', [
                 'establishment_id' => $this->establishment->id,
                 'inspector_id' => $this->inspector->id,
@@ -63,7 +70,7 @@ class InspectionScheduleTest extends TestCase
 
         $this->assertDatabaseHas('inspection_schedules', [
             'id' => $scheduleId,
-            'scheduled_by' => $this->healthOfficer->id,
+            'scheduled_by' => $this->barangayStaff->id,
             'status' => 'scheduled',
         ]);
 
@@ -136,6 +143,62 @@ class InspectionScheduleTest extends TestCase
 
         $this->assertSoftDeleted('inspection_schedules', ['id' => $schedule->id]);
         $this->assertSoftDeleted('inspections', ['inspection_schedule_id' => $schedule->id]);
+    }
+
+    public function test_staff_can_schedule_request_without_establishment(): void
+    {
+        $resident = $this->makeUser('resident', 'scheduleresident@example.com');
+
+        $request = InspectionRequest::query()->create([
+            'request_number' => 'REQ-'.strtoupper(substr(uniqid(), -6)),
+            'resident_id' => $resident->id,
+            'inspection_category_id' => InspectionCategory::where('slug', 'piggery')->firstOrFail()->id,
+            'application_type_id' => ApplicationType::where('slug', 'new_application')->firstOrFail()->id,
+            'applicant_name' => 'Juan Dela Cruz',
+            'applicant_address' => 'Barangay 178',
+            'contact_number' => '09171234567',
+            'email' => 'juan@example.com',
+            'business_name' => 'Piggery Farm',
+            'status' => 'approved_for_inspection',
+        ]);
+
+        $response = $this->actingAs($this->barangayStaff, 'sanctum')
+            ->postJson('/api/v1/inspections/schedules', [
+                'inspector_id' => $this->inspector->id,
+                'scheduled_date' => now()->addDay()->toDateString(),
+                'scheduled_time' => '09:30',
+                'status' => 'scheduled',
+                'inspection_request_id' => $request->id,
+            ]);
+
+        $response->assertStatus(201)
+            ->assertJsonPath('data.establishment', null)
+            ->assertJsonPath('data.inspection_request_id', $request->id);
+
+        $scheduleId = $response->json('data.id');
+
+        $this->assertDatabaseHas('inspection_schedules', [
+            'id' => $scheduleId,
+            'establishment_id' => null,
+        ]);
+
+        $this->assertDatabaseHas('inspections', [
+            'inspection_schedule_id' => $scheduleId,
+            'establishment_id' => null,
+            'inspector_id' => $this->inspector->id,
+        ]);
+    }
+
+    public function test_establishment_required_when_scheduling_without_request(): void
+    {
+        $this->actingAs($this->barangayStaff, 'sanctum')
+            ->postJson('/api/v1/inspections/schedules', [
+                'inspector_id' => $this->inspector->id,
+                'scheduled_date' => now()->addDay()->toDateString(),
+                'status' => 'scheduled',
+            ])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['establishment_id']);
     }
 
     private function makeUser(string $roleSlug, string $email): User

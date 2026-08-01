@@ -1,9 +1,10 @@
 import { Navigate, useLocation } from 'react-router-dom'
 
 import { useAuth } from '@/context/AuthContext'
+import { getHomePath } from '@/utils/permissions'
 
 export function ProtectedRoute({ children, module }) {
-  const { isAuthenticated, loading, canAccess } = useAuth()
+  const { isAuthenticated, loading, canAccess, user } = useAuth()
   const location = useLocation()
 
   if (loading) {
@@ -15,11 +16,17 @@ export function ProtectedRoute({ children, module }) {
   }
 
   if (!isAuthenticated) {
-    return <Navigate to="/login" replace state={{ from: location }} />
+    return (
+      <Navigate
+        to={user?.role?.slug === 'resident' ? '/login' : '/admin/login'}
+        replace
+        state={{ from: location }}
+      />
+    )
   }
 
   if (module && !canAccess(module)) {
-    return <Navigate to="/dashboard" replace />
+    return <Navigate to={getHomePath(user?.role?.slug)} replace />
   }
 
   return children

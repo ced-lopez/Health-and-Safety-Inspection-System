@@ -12,7 +12,17 @@ class EnsureUserHasRole
     {
         $user = $request->user();
 
-        if (! $user || ! $user->hasRole($roles)) {
+        if (! $user) {
+            return response()->json([
+                'success' => false,
+                'message' => 'You do not have permission to perform this action.',
+            ], 403);
+        }
+
+        // Ensure the role relation is loaded to avoid any lazy-loading during role checks.
+        $user->loadMissing('role');
+
+        if (! $user->hasRole($roles)) {
             return response()->json([
                 'success' => false,
                 'message' => 'You do not have permission to perform this action.',

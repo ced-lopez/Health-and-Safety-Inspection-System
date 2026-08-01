@@ -1,89 +1,77 @@
-# Health & Safety Inspections System — Backend API
+# Health & Safety Inspection System - Backend API
 
-Laravel REST API for Barangay 178 North Caloocan City.
+Laravel REST API for the Barangay 178 Health and Safety Inspection System.
 
-## Requirements
+## Confirmed Stack
 
-- PHP 8.3+
-- Composer
-- PostgreSQL 14+ (Supabase recommended)
-- PHP extension: `pdo_pgsql` (required for PostgreSQL)
+- PHP 8.3 or newer
+- Laravel 12
+- Laravel Sanctum
+- PostgreSQL, with Supabase recommended for hosted development
+- Laravel Storage
+- PHPUnit
 
 ## Quick Start
 
 ```bash
 cd health-safety-system/backend
+composer install
 cp .env.example .env
 php artisan key:generate
 php artisan migrate
 php artisan serve
 ```
 
-API base URL: `http://localhost:8000/api/v1`
+API base URL:
 
-Health check: `GET /api/v1/health`
-
-## PostgreSQL / Supabase Setup
-
-1. Enable the PostgreSQL extension in `php.ini`:
-   ```ini
-   extension=pdo_pgsql
-   extension=pgsql
-   ```
-
-2. Create a Supabase project or local PostgreSQL database named `health_safety_b178`.
-
-3. Update `.env`:
-   ```env
-   DB_CONNECTION=pgsql
-   DB_HOST=db.YOUR_PROJECT.supabase.co
-   DB_PORT=5432
-   DB_DATABASE=postgres
-   DB_USERNAME=postgres
-   DB_PASSWORD=your-supabase-password
-   DB_SSLMODE=require
-   ```
-
-4. Run migrations:
-   ```bash
-   php artisan migrate
-   ```
-
-## Authentication (Sanctum)
-
-- SPA cookie-based auth for the React frontend (`localhost:5173`)
-- Bearer token auth for API clients
-- CSRF cookie route: `GET /sanctum/csrf-cookie`
-
-## API Structure
-
-```
-/api/v1/
-├── health              GET   Public health check
-├── auth/               POST  Login, register (Phase 4)
-├── user                GET   Authenticated user
-├── establishments/       CRUD (Phase 6)
-├── inspections/        CRUD (Phases 7–9)
-├── violations/         CRUD (Phase 10)
-├── certifications/     CRUD (Phase 11)
-└── documents/          AI processing (Phase 12)
+```text
+http://localhost:8000/api/v1
 ```
 
-## Development
+Health check:
 
-```bash
-php artisan serve          # Start API server on :8000
-php artisan migrate        # Run migrations
-php artisan route:list     # List all routes
-php artisan test           # Run tests
+```text
+GET http://localhost:8000/api/v1/health
 ```
 
-## Frontend Integration
+## Environment
 
-The React frontend expects:
+Copy `.env.example` to `.env`, then configure the database and frontend origin.
 
 ```env
-VITE_API_URL=http://localhost:8000/api
+APP_URL=http://localhost:8000
+FRONTEND_URL=http://localhost:5173
+
+DB_CONNECTION=pgsql
+DB_HOST=aws-1-ap-northeast-2.pooler.supabase.com
+DB_PORT=5432
+DB_DATABASE=postgres
+DB_USERNAME=postgres.YOUR_PROJECT_REF
+DB_PASSWORD=your-supabase-password
+DB_SSLMODE=require
+
+SANCTUM_STATEFUL_DOMAINS=localhost,localhost:5173,127.0.0.1,127.0.0.1:5173
 ```
 
-Ensure `FRONTEND_URL` in backend `.env` matches the Vite dev server URL for CORS.
+For local PostgreSQL, replace the Supabase host, username, and password with local credentials.
+
+## API Conventions
+
+- All application routes live under `/api/v1`.
+- Responses use a consistent JSON envelope through shared API response helpers.
+- Protected routes use Laravel Sanctum.
+- Role-protected routes use the `role` route middleware alias.
+- Public verification routes must expose only safe clearance status data.
+
+## Development Commands
+
+```bash
+php artisan serve
+php artisan route:list --path=api
+php artisan test
+composer validate
+```
+
+## Phase Boundary
+
+Phase 3 initializes and verifies the Laravel backend foundation only. Database modeling, authentication workflow expansion, resident features, inspection requests, OCR, QR clearance issuance, email notifications, reports, and mobile sync are later phases.

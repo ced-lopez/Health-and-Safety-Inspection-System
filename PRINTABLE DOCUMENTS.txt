@@ -1,0 +1,150 @@
+
+PRINTABLE DOCUMENTS
+
+====================================================
+DOCUMENT GENERATION & PRINTING
+====================================================
+
+The system must support generating professional printable documents in PDF format suitable for government use.
+
+All generated documents should have consistent formatting and include:
+
+- Barangay 178 Official Header
+- Barangay Logo
+- Republic of the Philippines Header
+- North Caloocan City
+- Document Title
+- Unique Document Number
+- Date Generated
+- QR Code (where applicable)
+- Authorized Signatory
+- Signature Line
+- Official Seal Placeholder
+- Footer with system-generated disclaimer
+
+All printable documents must be downloadable and printable in A4 paper size.
+
+====================================================
+PRINTABLE DOCUMENTS
+====================================================
+
+1. Inspection Request Form
+- Applicant Information
+- Inspection Category
+- Application Type
+- Submitted Requirements
+- Request Date
+- Request Number
+
+2. Inspection Assignment Form
+- Inspector Name
+- Assigned Date
+- Applicant Information
+- Inspection Category
+- Inspection Location
+- Assignment Status
+
+3. Inspection Checklist
+- Checklist Items
+- Compliance Status
+- Inspector Remarks
+- Photos (if applicable)
+- Overall Result
+
+4. Inspection Report
+- Report Number
+- Applicant Information
+- Business Information
+- Inspection Category
+- Inspection Date
+- Inspector Details
+- Checklist Results
+- Violations
+- Recommendations
+- Final Assessment
+- Signature Section
+
+5. Violation Notice
+- Notice Number
+- Applicant Information
+- Violations Found
+- Severity
+- Corrective Actions
+- Compliance Deadline
+- Follow-up Inspection Date
+- Authorized Signature
+
+6. Follow-up Inspection Report
+- Previous Violation Reference
+- Corrective Actions Completed
+- Re-inspection Results
+- Final Recommendation
+- Inspector Signature
+
+7. Health and Safety Clearance
+- Clearance Number
+- Applicant Name
+- Business Name (if applicable)
+- Inspection Category
+- Issue Date
+- Expiration Date
+- One-Year Validity
+- QR Code
+- Verification URL
+- Barangay Official Signature
+
+8. Certificate of Compliance (Optional)
+- Certificate Number
+- Applicant Information
+- Inspection Category
+- Date Issued
+- QR Code
+- Official Signature
+
+9. Resident Application Summary
+- Applicant Information
+- Submitted Documents
+- Application Status
+- Inspection Timeline
+- Clearance Status
+
+10. Monthly Inspection Report
+- Total Requests
+- Completed Inspections
+- Pending Requests
+- Violations
+- Approved Clearances
+- Expiring Clearances
+- Charts and Statistics
+
+11. Annual Inspection Report
+- Inspection Summary
+- Category Breakdown
+- Violation Trends
+- Clearance Statistics
+- Performance Metrics
+
+====================================================
+PRINTING REQUIREMENTS
+====================================================
+
+All printable documents should:
+
+- Be generated as PDF.
+- Be printable directly from the web application.
+- Maintain professional government formatting.
+- Support preview before printing.
+- Automatically paginate long tables.
+- Include page numbers.
+- Include the generation timestamp.
+- Include the user who generated the document.
+- Preserve formatting across browsers.
+- Support reprinting at any time.
+
+====================================================
+PDF LIBRARY
+====================================================
+
+Use a reliable PDF generation library compatible with the project's technology stack.
+
+The generated PDFs should maintain a consistent layout, support tables, images, QR codes, and official branding.

@@ -20,6 +20,12 @@ class EstablishmentResource extends JsonResource
             'email' => $this->email,
             'registration_number' => $this->registration_number,
             'status' => $this->status,
+            'resident_id' => $this->resident_id,
+            'ownership_status' => $this->ownership_status,
+            'resident' => $this->whenLoaded('resident', fn () => [
+                'id' => $this->resident->id,
+                'name' => $this->resident->name,
+            ]),
             'latitude' => $this->latitude !== null ? (float) $this->latitude : null,
             'longitude' => $this->longitude !== null ? (float) $this->longitude : null,
             'created_at' => $this->created_at?->toIso8601String(),

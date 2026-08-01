@@ -1,0 +1,575 @@
+<?php
+
+namespace App\Http\Controllers\Api;
+
+use App\Http\Requests\InspectionRequest\ReviewInspectionRequest;
+use App\Http\Requests\InspectionRequest\StoreInspectionRequest;
+use App\Http\Resources\ApplicationTypeResource;
+use App\Http\Resources\InspectionCategoryResource;
+use App\Http\Resources\InspectionRequestResource;
+use App\Models\ApplicationType;
+use App\Models\DocumentRequirementRule;
+use App\Models\Establishment;
+use App\Models\InspectionAssignment;
+use App\Models\InspectionCategory;
+use App\Models\InspectionRequest;
+use App\Models\User;
+use App\Notifications\ApplicationSubmitted;
+use App\Notifications\Concerns\NotifiesRoles;
+use App\Notifications\InspectorAssigned;
+use App\Notifications\MissingRequirements;
+use App\Notifications\NewApplicationSubmitted;
+use App\Notifications\NewInspectionAssignment;
+use App\Services\AuditLogger;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+
+class InspectionRequestController extends BaseApiController
+{
+    use NotifiesRoles;
+
+    public function index(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        $query = InspectionRequest::query()
+            ->with(['resident.role', 'inspectionCategory', 'applicationType', 'establishment', 'reviewedBy'])
+            ->withCount('documents');
+
+        if ($user->role?->slug === 'resident') {
+            $query->where('resident_id', $user->id);
+        }
+
+        if ($request->filled('status') && $request->input('status') !== 'all') {
+            $query->where('status', $request->input('status'));
+        }
+
+        if ($request->filled('category_id')) {
+            $query->where('inspection_category_id', $request->input('category_id'));
+        }
+
+        if ($request->filled('search')) {
+            $search = '%'.strtolower(trim((string) $request->input('search'))).'%';
+
+            $query->where(function ($q) use ($search) {
+                $q->whereRaw('LOWER(request_number) LIKE ?', [$search])
+                    ->orWhereRaw('LOWER(business_name) LIKE ?', [$search])
+                    ->orWhereRaw('LOWER(applicant_name) LIKE ?', [$search])
+                    ->orWhereHas('resident', function ($r) use ($search) {
+                        $r->whereRaw('LOWER(name) LIKE ?', [$search])
+                            ->orWhereRaw('LOWER(email) LIKE ?', [$search]);
+                    });
+            });
+        }
+
+        $perPage = min($request->integer('per_page', 10), 50);
+        $requests = $query->orderByDesc('created_at')->paginate($perPage);
+
+        return $this->success([
+            'inspection_requests' => InspectionRequestResource::collection($requests),
+            'meta' => [
+                'current_page' => $requests->currentPage(),
+                'last_page' => $requests->lastPage(),
+                'per_page' => $requests->perPage(),
+                'total' => $requests->total(),
+            ],
+        ], 'Inspection requests retrieved successfully');
+    }
+
+    public function options(): JsonResponse
+    {
+        $categories = InspectionCategory::query()
+            ->where('is_active', true)
+            ->orderBy('name')
+            ->get();
+
+        $applicationTypes = ApplicationType::query()
+            ->where('is_active', true)
+            ->orderBy('name')
+            ->get();
+
+        return $this->success([
+            'categories' => InspectionCategoryResource::collection($categories),
+            'application_types' => ApplicationTypeResource::collection($applicationTypes),
+        ], 'Inspection request options retrieved successfully');
+    }
+
+    public function documentRequirements(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'inspection_category_id' => ['required', 'exists:inspection_categories,id'],
+            'application_type_id' => ['required', 'exists:application_types,id'],
+            'sub_path' => ['nullable', 'string', 'in:household,commercial_kennel,backyard_micro_scale'],
+        ]);
+
+        $rules = $this->requirementRules(
+            $validated['inspection_category_id'],
+            $validated['application_type_id'],
+            $validated['sub_path'] ?? null
+        );
+
+        $items = $rules->map(fn (DocumentRequirementRule $rule) => [
+            'document_type' => $rule->document_type,
+            'document_name' => $rule->document_name,
+            'is_required' => (bool) $rule->is_required,
+            'requires_expiration_check' => (bool) $rule->requires_expiration_check,
+            'sub_path' => $rule->sub_path,
+            'notes' => $rule->notes,
+        ])->values();
+
+        return $this->success([
+            'requirements' => $items,
+            'summary' => [
+                'required_count' => $items->where('is_required', true)->count(),
+            ],
+        ], 'Document requirements retrieved successfully');
+    }
+
+    public function store(StoreInspectionRequest $request): JsonResponse
+    {
+        $user = $request->user();
+
+        $validated = $request->validated();
+
+        if (! empty($validated['establishment_id'])) {
+            $establishment = Establishment::query()->find($validated['establishment_id']);
+
+            if ($establishment && $establishment->resident_id !== $user->id && $establishment->ownership_status !== 'unclaimed') {
+                return $this->error(
+                    'This establishment belongs to another resident.',
+                    422,
+                    ['establishment_id' => ['You can only link an unclaimed establishment or one that you own.']]
+                );
+            }
+        }
+
+        $category = InspectionCategory::query()->find($validated['inspection_category_id']);
+
+        $blocked = $this->blockPiggeryPoultry($validated, $category, $user, $request);
+
+        if ($blocked) {
+            return $blocked;
+        }
+
+        if ($category?->slug === 'animal_raising_dogs' && ! in_array($validated['sub_path'] ?? null, ['household', 'commercial_kennel'], true)) {
+            return $this->error(
+                'Please declare whether this is household pet dog keeping or a commercial kennel/breeding operation.',
+                422,
+                ['sub_path' => ['Please declare whether this is household pet dog keeping or a commercial kennel/breeding operation.']]
+            );
+        }
+
+        $requestNumber = 'BRGY-REQ-'.now()->format('Ymd').'-'.strtoupper(substr(uniqid(), -4));
+
+        $inspectionRequest = InspectionRequest::query()->create([
+            'request_number' => $requestNumber,
+            'resident_id' => $user->id,
+            'inspection_category_id' => $validated['inspection_category_id'],
+            'application_type_id' => $validated['application_type_id'],
+            'sub_path' => $validated['sub_path'] ?? null,
+            'declared_animal_count' => $validated['declared_animal_count'] ?? null,
+            'establishment_id' => $validated['establishment_id'] ?? null,
+            'applicant_name' => $validated['applicant_name'],
+            'applicant_age' => $validated['applicant_age'] ?? null,
+            'applicant_address' => $validated['applicant_address'],
+            'contact_number' => $validated['contact_number'],
+            'email' => $validated['email'],
+            'business_name' => $validated['business_name'] ?? null,
+            'remarks' => $validated['remarks'] ?? null,
+            'status' => 'submitted',
+            'submitted_at' => now(),
+        ]);
+
+        if (! $inspectionRequest->establishment_id) {
+            $establishment = $this->ensureEstablishment($inspectionRequest);
+
+            if ($establishment) {
+                $inspectionRequest->update(['establishment_id' => $establishment->id]);
+            }
+        }
+
+        $inspectionRequest->load([
+            'resident.role', 'inspectionCategory', 'applicationType', 'establishment',
+        ]);
+
+        $categoryName = $inspectionRequest->inspectionCategory?->name ?? 'Inspection';
+        $businessName = $inspectionRequest->business_name ?: $inspectionRequest->applicant_name;
+
+        $user->notify(new ApplicationSubmitted(
+            $inspectionRequest->request_number,
+            $categoryName,
+            $inspectionRequest->applicant_name,
+        ));
+
+        $this->notifyRoles(new NewApplicationSubmitted(
+            $inspectionRequest->request_number,
+            $categoryName,
+            $inspectionRequest->applicant_name,
+            $businessName,
+        ), ['administrator', 'barangay_staff']);
+
+        AuditLogger::log(
+            $user,
+            'Inspection Requests',
+            'Submitted',
+            "Submitted inspection request {$inspectionRequest->request_number}",
+            $inspectionRequest,
+            $request,
+            event: 'inspection_request.submitted',
+        );
+
+        return $this->success(
+            new InspectionRequestResource($inspectionRequest),
+            'Inspection request submitted successfully',
+            201
+        );
+    }
+
+    public function show(InspectionRequest $inspectionRequest): JsonResponse
+    {
+        $inspectionRequest->load([
+            'resident.role',
+            'inspectionCategory',
+            'applicationType',
+            'establishment',
+            'reviewedBy.role',
+            'documents.uploader.role',
+            'documents.extraction.reviewer.role',
+            'inspectionAssignment.inspector.role',
+            'inspectionAssignment.assignedBy.role',
+        ]);
+
+        return $this->success(
+            new InspectionRequestResource($inspectionRequest),
+            'Inspection request retrieved successfully'
+        );
+    }
+
+    public function review(ReviewInspectionRequest $request, InspectionRequest $inspectionRequest): JsonResponse
+    {
+        $validated = $request->validated();
+
+        $inspectionRequest->update([
+            'status' => $validated['status'],
+            'reviewed_by' => $request->user()->id,
+            'reviewed_at' => now(),
+            'remarks' => $validated['remarks'] ?? $inspectionRequest->remarks,
+        ]);
+
+        AuditLogger::log(
+            $request->user(),
+            'Inspection Requests',
+            $this->reviewAction($validated['status']),
+            "Reviewed inspection request {$inspectionRequest->request_number}",
+            $inspectionRequest,
+            $request,
+            newValues: [
+                'status' => $validated['status'],
+                'remarks' => $validated['remarks'] ?? null,
+            ],
+            event: 'inspection_request.reviewed',
+        );
+
+        $inspectionRequest->load([
+            'resident.role', 'inspectionCategory', 'applicationType', 'establishment', 'reviewedBy.role',
+        ]);
+
+        if ($validated['status'] === 'requirements_incomplete') {
+            $inspectionRequest->resident?->notify(new MissingRequirements(
+                $inspectionRequest->request_number,
+                $this->missingRequirements($inspectionRequest),
+                $inspectionRequest->applicant_name,
+            ));
+        }
+
+        return $this->success(
+            new InspectionRequestResource($inspectionRequest),
+            'Inspection request updated successfully'
+        );
+    }
+
+    public function assign(Request $request, InspectionRequest $inspectionRequest): JsonResponse
+    {
+        $validated = $request->validate([
+            'inspector_id' => ['required', 'exists:users,id'],
+        ]);
+
+        if ($inspectionRequest->status !== 'approved_for_inspection') {
+            return $this->error('Only approved inspection requests can be assigned to an inspector.', 422);
+        }
+
+        $alreadyAssigned = $inspectionRequest->inspectionAssignment()
+            ->whereIn('status', ['assigned', 'in_progress'])
+            ->exists();
+
+        if ($alreadyAssigned) {
+            return $this->error('This request already has an active inspector assignment.', 422);
+        }
+
+        $inspector = User::query()
+            ->where('is_active', true)
+            ->whereHas('role', fn ($q) => $q->where('slug', 'inspector'))
+            ->findOrFail($validated['inspector_id']);
+
+        DB::transaction(function () use ($inspectionRequest, $inspector, $request) {
+            $inspectionRequest->update([
+                'status' => 'assigned',
+                'reviewed_by' => $request->user()->id,
+                'reviewed_at' => now(),
+            ]);
+
+            InspectionAssignment::query()->create([
+                'inspection_request_id' => $inspectionRequest->id,
+                'inspector_id' => $inspector->id,
+                'assigned_by' => $request->user()->id,
+                'status' => 'assigned',
+                'assigned_at' => now(),
+            ]);
+        });
+
+        AuditLogger::log(
+            $request->user(),
+            'Inspection Requests',
+            'Assigned',
+            "Assigned inspector {$inspector->name} to request {$inspectionRequest->request_number}",
+            $inspectionRequest,
+            $request,
+            newValues: [
+                'inspector_id' => $inspector->id,
+            ],
+            event: 'inspection_request.assigned',
+        );
+
+        $inspectionRequest->load([
+            'resident.role', 'inspectionCategory', 'applicationType', 'establishment',
+            'reviewedBy.role', 'inspectionAssignment.inspector.role',
+        ]);
+
+        $inspectionRequest->resident?->notify(new InspectorAssigned(
+            $inspectionRequest->request_number,
+            $inspector->name,
+            $inspectionRequest->applicant_name,
+        ));
+
+        $inspector->notify(new NewInspectionAssignment(
+            $inspectionRequest->request_number,
+            $inspectionRequest->business_name ?: $inspectionRequest->applicant_name,
+            $inspectionRequest->inspectionCategory?->name ?? 'Inspection',
+            $inspectionRequest->applicant_name,
+        ));
+
+        return $this->success(
+            new InspectionRequestResource($inspectionRequest),
+            'Inspector assigned successfully'
+        );
+    }
+
+    public function queue(Request $request): JsonResponse
+    {
+        $perPage = min($request->integer('per_page', 20), 50);
+
+        $queue = InspectionRequest::query()
+            ->whereIn('status', ['approved_for_inspection', 'assigned'])
+            ->with([
+                'resident.role',
+                'inspectionCategory',
+                'applicationType',
+                'establishment',
+                'inspectionAssignment.inspector.role',
+                'inspectionAssignment.assignedBy.role',
+            ])
+            ->withCount('documents')
+            ->orderByRaw("CASE WHEN status = 'approved_for_inspection' THEN 0 ELSE 1 END")
+            ->orderBy('reviewed_at')
+            ->paginate($perPage);
+
+        return $this->success([
+            'queue' => InspectionRequestResource::collection($queue),
+            'meta' => [
+                'current_page' => $queue->currentPage(),
+                'last_page' => $queue->lastPage(),
+                'per_page' => $queue->perPage(),
+                'total' => $queue->total(),
+            ],
+        ], 'Inspection queue retrieved successfully');
+    }
+
+    public function requirements(InspectionRequest $inspectionRequest): JsonResponse
+    {
+        $rules = $this->requirementRules(
+            $inspectionRequest->inspection_category_id,
+            $inspectionRequest->application_type_id,
+            $inspectionRequest->sub_path
+        );
+
+        $documents = $inspectionRequest->documents()
+            ->with('extraction')
+            ->get();
+
+        $items = $rules->map(function (DocumentRequirementRule $rule) use ($documents) {
+            $match = $documents->first(fn ($doc) => $doc->document_type === $rule->document_type);
+
+            return [
+                'document_type' => $rule->document_type,
+                'document_name' => $rule->document_name,
+                'is_required' => (bool) $rule->is_required,
+                'requires_expiration_check' => (bool) $rule->requires_expiration_check,
+                'uploaded' => $match !== null,
+                'verified' => $match?->status === 'verified',
+                'expired' => (bool) ($match?->extraction?->is_expired ?? false),
+                'document' => $match ? [
+                    'id' => $match->id,
+                    'file_name' => $match->file_name,
+                    'status' => $match->status,
+                    'is_expired' => (bool) ($match->extraction?->is_expired ?? false),
+                ] : null,
+            ];
+        })->values();
+
+        $required = $items->filter(fn ($item) => $item['is_required'])->values();
+        $requiredCount = $required->count();
+        $uploadedCount = $required->filter(fn ($item) => $item['uploaded'])->count();
+        $verifiedCount = $required->filter(fn ($item) => $item['verified'])->count();
+
+        return $this->success([
+            'requirements' => $items,
+            'summary' => [
+                'required_count' => $requiredCount,
+                'uploaded_count' => $uploadedCount,
+                'verified_count' => $verifiedCount,
+                'complete' => $requiredCount > 0 && $uploadedCount === $requiredCount,
+                'all_verified' => $requiredCount > 0 && $verifiedCount === $requiredCount,
+            ],
+        ], 'Requirements verification status retrieved successfully');
+    }
+
+    private function reviewAction(string $status): string
+    {
+        return match ($status) {
+            'approved_for_inspection' => 'Approved',
+            'requirements_incomplete' => 'Requirements Incomplete',
+            default => 'Rejected',
+        };
+    }
+
+    private function missingRequirements(InspectionRequest $inspectionRequest): array
+    {
+        $rules = $this->requirementRules(
+            $inspectionRequest->inspection_category_id,
+            $inspectionRequest->application_type_id,
+            $inspectionRequest->sub_path
+        )->where('is_required', true);
+
+        $uploadedTypes = $inspectionRequest->documents()->pluck('document_type')->all();
+
+        return $rules
+            ->reject(fn ($rule) => in_array($rule->document_type, $uploadedTypes, true))
+            ->pluck('document_name')
+            ->values()
+            ->all();
+    }
+
+    private function requirementRules(int $categoryId, int $applicationTypeId, ?string $subPath)
+    {
+        return DocumentRequirementRule::query()
+            ->where('inspection_category_id', $categoryId)
+            ->where('application_type_id', $applicationTypeId)
+            ->where(function ($query) use ($subPath) {
+                $query->whereNull('sub_path')
+                    ->orWhere('sub_path', $subPath);
+            })
+            ->orderByDesc('is_required')
+            ->orderBy('id')
+            ->get();
+    }
+
+    private function blockPiggeryPoultry(array $validated, ?InspectionCategory $category, User $user, Request $request): ?JsonResponse
+    {
+        if (! in_array($category?->slug, ['piggery', 'poultry'], true)) {
+            return null;
+        }
+
+        $subPath = $validated['sub_path'] ?? null;
+        $animalCount = $validated['declared_animal_count'] ?? null;
+
+        if ($subPath !== 'backyard_micro_scale') {
+            AuditLogger::log(
+                $user,
+                'Inspection Requests',
+                'Blocked',
+                'Blocked commercial-scale '.$category->name.' application submission',
+                null,
+                $request,
+                newValues: [
+                    'category' => $category->slug,
+                    'sub_path' => $subPath,
+                    'reason' => 'commercial_scale_blocked',
+                ],
+                event: 'inspection_request.blocked',
+            );
+
+            return $this->error(
+                'Zoning clearances cannot be issued for commercial-scale '.$category->name.' in this barangay. Only backyard micro-scale (2–5 animals, personal use) may be applied for.',
+                422,
+                ['sub_path' => ['Commercial-scale '.$category->name.' is not allowed in this barangay.']]
+            );
+        }
+
+        if ($animalCount === null || (int) $animalCount < 2 || (int) $animalCount > 5) {
+            AuditLogger::log(
+                $user,
+                'Inspection Requests',
+                'Blocked',
+                'Blocked '.$category->name.' application with invalid animal count',
+                null,
+                $request,
+                newValues: [
+                    'category' => $category->slug,
+                    'declared_animal_count' => $animalCount,
+                    'reason' => 'invalid_animal_count',
+                ],
+                event: 'inspection_request.blocked',
+            );
+
+            return $this->error(
+                'Backyard micro-scale '.$category->name.' requires a declared animal count between 2 and 5.',
+                422,
+                ['declared_animal_count' => ['Backyard micro-scale '.$category->name.' requires a declared animal count between 2 and 5.']]
+            );
+        }
+
+        return null;
+    }
+
+    private function ensureEstablishment(InspectionRequest $inspectionRequest): ?Establishment
+    {
+        $name = trim((string) ($inspectionRequest->business_name ?: $inspectionRequest->applicant_name));
+
+        if ($name === '') {
+            return null;
+        }
+
+        $existing = Establishment::query()
+            ->where('resident_id', $inspectionRequest->resident_id)
+            ->whereRaw('LOWER(name) = ?', [mb_strtolower($name)])
+            ->first();
+
+        if ($existing) {
+            return $existing;
+        }
+
+        return Establishment::query()->create([
+            'name' => $name,
+            'business_type' => $inspectionRequest->inspectionCategory?->name ?? 'General',
+            'owner_name' => $inspectionRequest->applicant_name,
+            'address' => $inspectionRequest->applicant_address,
+            'barangay' => 'Barangay 178',
+            'contact_number' => $inspectionRequest->contact_number,
+            'email' => $inspectionRequest->email,
+            'registration_number' => 'BRGY-EST-'.now()->format('Ymd').'-'.strtoupper(substr(uniqid(), -4)),
+            'status' => 'active',
+            'resident_id' => $inspectionRequest->resident_id,
+            'ownership_status' => 'linked',
+        ]);
+    }
+}

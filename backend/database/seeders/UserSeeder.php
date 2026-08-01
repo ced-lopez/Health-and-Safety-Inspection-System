@@ -13,7 +13,7 @@ class UserSeeder extends Seeder
     {
         $adminRole = Role::query()->where('slug', 'administrator')->first();
         $inspectorRole = Role::query()->where('slug', 'inspector')->first();
-        $healthRole = Role::query()->where('slug', 'health_officer')->first();
+        $barangayStaffRole = Role::query()->where('slug', 'barangay_staff')->first();
 
         $users = [
             [
@@ -35,9 +35,9 @@ class UserSeeder extends Seeder
                 'email_verified_at' => now(),
             ],
             [
-                'role_id' => $healthRole?->id,
+                'role_id' => $barangayStaffRole?->id,
                 'name' => 'Ana Reyes',
-                'email' => 'health@barangay178.gov.ph',
+                'email' => 'staff@barangay178.gov.ph',
                 'phone' => '09191234567',
                 'password' => Hash::make('password'),
                 'is_active' => true,

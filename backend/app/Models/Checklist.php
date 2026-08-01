@@ -2,18 +2,23 @@
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
-#[Fillable([
-    'name', 'description', 'category', 'version', 'is_active', 'created_by',
-])]
 class Checklist extends Model
 {
     use SoftDeletes;
+
+    protected $fillable = [
+        'name',
+        'description',
+        'category',
+        'version',
+        'is_active',
+        'created_by',
+    ];
 
     protected function casts(): array
     {

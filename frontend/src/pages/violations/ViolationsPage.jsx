@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { AlertCircle, Edit, ExternalLink, Eye, FileUp, Search, Trash2 } from 'lucide-react'
+import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { toast } from 'sonner'
 
 import { useAuth } from '@/context/AuthContext'
@@ -113,7 +114,6 @@ export default function ViolationsPage() {
     page: 1,
   })
   const [searchInput, setSearchInput] = useState('')
-  const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState(null)
@@ -132,7 +132,7 @@ export default function ViolationsPage() {
   const [evidenceSubmitting, setEvidenceSubmitting] = useState(false)
 
   const roleSlug = user?.role?.slug
-  const canArchive = ['administrator', 'health_officer'].includes(roleSlug)
+  const canArchive = ['administrator', 'barangay_staff'].includes(roleSlug)
 
   const selectedInspection = inspections.find(
     (inspection) => String(inspection.id) === String(form.inspection_id),
@@ -149,36 +149,37 @@ export default function ViolationsPage() {
     [filters],
   )
 
-  async function loadOptions() {
-    try {
-      const response = await fetchViolationOptions()
-      setInspections(response.data.inspections ?? [])
-      setAssignees(response.data.assignees ?? [])
-    } catch (error) {
-      toast.error('Unable to load violation options')
-      console.error(error)
-    }
-  }
+  const optionsQuery = useQuery({
+    queryKey: ['violation-options'],
+    queryFn: fetchViolationOptions,
+  })
 
-  async function loadViolations() {
-    setLoading(true)
-
-    try {
-      const response = await fetchViolations(queryParams)
-      const registry = response.data.violations ?? []
-      setViolations(registry.data ?? registry)
-      setMeta(response.data.meta ?? { current_page: 1, last_page: 1, total: 0 })
-    } catch (error) {
-      toast.error('Unable to load violations')
-      console.error(error)
-    } finally {
-      setLoading(false)
-    }
-  }
+  const violationsQuery = useQuery({
+    queryKey: ['violations', queryParams],
+    queryFn: async () => fetchViolations(queryParams),
+    placeholderData: keepPreviousData,
+  })
 
   useEffect(() => {
-    loadOptions()
-  }, [])
+    if (optionsQuery.isError) {
+      toast.error('Unable to load violation options')
+      console.error(optionsQuery.error)
+    }
+  }, [optionsQuery.error, optionsQuery.isError])
+
+  useEffect(() => {
+    if (violationsQuery.isError) {
+      toast.error('Unable to load violations')
+      console.error(violationsQuery.error)
+    }
+  }, [violationsQuery.error, violationsQuery.isError])
+
+  useEffect(() => {
+    if (optionsQuery.data) {
+      setInspections(optionsQuery.data.data.inspections ?? [])
+      setAssignees(optionsQuery.data.data.assignees ?? [])
+    }
+  }, [optionsQuery.data])
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
@@ -193,15 +194,20 @@ export default function ViolationsPage() {
           page: 1,
         }
       })
-    }, 300)
+    }, 150)
 
     return () => window.clearTimeout(timeout)
   }, [searchInput])
 
   useEffect(() => {
-    loadViolations()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [queryParams])
+    if (violationsQuery.data) {
+      const registry = violationsQuery.data.data.violations ?? []
+      setViolations(registry.data ?? registry)
+      setMeta(violationsQuery.data.data.meta ?? { current_page: 1, last_page: 1, total: 0 })
+    }
+  }, [violationsQuery.data])
+
+  const loading = violationsQuery.isLoading && violations.length === 0
 
   function updateFilter(key, value) {
     setFilters((current) => ({
@@ -270,7 +276,7 @@ export default function ViolationsPage() {
       }
 
       setDialogOpen(false)
-      await loadViolations()
+      await violationsQuery.refetch()
     } catch (error) {
       const validationErrors = error.response?.data?.errors
 
@@ -297,7 +303,7 @@ export default function ViolationsPage() {
     try {
       await deleteViolation(violation.id)
       toast.success('Violation archived')
-      await loadViolations()
+      await violationsQuery.refetch()
     } catch (error) {
       toast.error('Unable to archive violation')
       console.error(error)
@@ -348,7 +354,7 @@ export default function ViolationsPage() {
       await uploadViolationEvidence(evidenceViolation.id, payload)
       toast.success('Evidence uploaded')
       setEvidenceOpen(false)
-      await loadViolations()
+      await violationsQuery.refetch()
     } catch (error) {
       toast.error('Unable to upload evidence')
       console.error(error)
@@ -361,7 +367,12 @@ export default function ViolationsPage() {
     <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="text-2xl font-semibold tracking-tight">Violations</h2>
+          <div className="flex items-center gap-2">
+            <h2 className="text-2xl font-semibold tracking-tight">Violations</h2>
+            {violationsQuery.isFetching && !loading && (
+              <span className="text-xs text-muted-foreground">Refreshing...</span>
+            )}
+          </div>
           <p className="text-sm text-muted-foreground">
             Track safety violations, deadlines, evidence, and resolution status
           </p>

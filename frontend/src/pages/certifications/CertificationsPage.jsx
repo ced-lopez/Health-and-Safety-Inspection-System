@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Edit, FileCheck, Printer, Search, Trash2 } from 'lucide-react'
+import { Download, Edit, FileCheck, Printer, RefreshCw, Search, ShieldCheck, Trash2, XCircle } from 'lucide-react'
+import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { toast } from 'sonner'
 
 import { useAuth } from '@/context/AuthContext'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import QrCode from '@/components/QrCode'
 import {
   Card,
   CardContent,
@@ -32,10 +34,14 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import {
+  approveCertificationDocument,
+  certificationPdfUrl,
   createCertificationDocument,
   deleteCertificationDocument,
   fetchCertificationDocuments,
   fetchCertificationOptions,
+  renewCertificationDocument,
+  revokeCertificationDocument,
   updateCertificationDocument,
 } from '@/services/certificationService'
 
@@ -98,7 +104,6 @@ export default function CertificationsPage() {
     status: 'all',
   })
   const [searchInput, setSearchInput] = useState('')
-  const [loading, setLoading] = useState(true)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState(null)
   const [form, setForm] = useState(emptyForm)
@@ -117,47 +122,53 @@ export default function CertificationsPage() {
     [filters],
   )
 
+  const optionsQuery = useQuery({
+    queryKey: ['certification-options'],
+    queryFn: fetchCertificationOptions,
+  })
+
+  const documentsQuery = useQuery({
+    queryKey: ['certification-documents', queryParams],
+    queryFn: async () => fetchCertificationDocuments(queryParams),
+    placeholderData: keepPreviousData,
+  })
+
   useEffect(() => {
     const timeout = window.setTimeout(() => {
       setFilters((current) => ({ ...current, search: searchInput }))
-    }, 300)
+    }, 150)
 
     return () => window.clearTimeout(timeout)
   }, [searchInput])
 
   useEffect(() => {
-    loadOptions()
-  }, [])
+    if (optionsQuery.isError) {
+      toast.error('Unable to load issuance options')
+      console.error(optionsQuery.error)
+    }
+  }, [optionsQuery.error, optionsQuery.isError])
 
   useEffect(() => {
-    loadDocuments()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [queryParams])
-
-  async function loadOptions() {
-    try {
-      const response = await fetchCertificationOptions()
-      setEstablishments(response.data.establishments ?? [])
-      setInspections(response.data.inspections ?? [])
-    } catch (error) {
-      toast.error('Unable to load issuance options')
-      console.error(error)
-    }
-  }
-
-  async function loadDocuments() {
-    setLoading(true)
-
-    try {
-      const response = await fetchCertificationDocuments(queryParams)
-      setDocuments(response.data.documents ?? [])
-    } catch (error) {
+    if (documentsQuery.isError) {
       toast.error('Unable to load certifications and clearances')
-      console.error(error)
-    } finally {
-      setLoading(false)
+      console.error(documentsQuery.error)
     }
-  }
+  }, [documentsQuery.error, documentsQuery.isError])
+
+  useEffect(() => {
+    if (optionsQuery.data) {
+      setEstablishments(optionsQuery.data.data.establishments ?? [])
+      setInspections(optionsQuery.data.data.inspections ?? [])
+    }
+  }, [optionsQuery.data])
+
+  useEffect(() => {
+    if (documentsQuery.data) {
+      setDocuments(documentsQuery.data.data.documents ?? [])
+    }
+  }, [documentsQuery.data])
+
+  const loading = documentsQuery.isLoading && documents.length === 0
 
   function updateFilter(key, value) {
     setFilters((current) => ({ ...current, [key]: value }))
@@ -227,7 +238,7 @@ export default function CertificationsPage() {
       }
 
       setDialogOpen(false)
-      await loadDocuments()
+      await documentsQuery.refetch()
     } catch (error) {
       const validationErrors = error.response?.data?.errors
 
@@ -254,11 +265,68 @@ export default function CertificationsPage() {
     try {
       await deleteCertificationDocument(document.document_kind, document.id)
       toast.success('Document archived')
-      await loadDocuments()
+      await documentsQuery.refetch()
     } catch (error) {
       toast.error('Unable to archive document')
       console.error(error)
     }
+  }
+
+  async function handleApprove(document) {
+    try {
+      await approveCertificationDocument(document.document_kind, document.id)
+      toast.success('Document approved')
+      await documentsQuery.refetch()
+      if (preview?.id === document.id) {
+        setPreview({ ...preview, status: 'active' })
+      }
+    } catch (error) {
+      toast.error(error.response?.data?.message ?? 'Unable to approve document')
+    }
+  }
+
+  async function handleRevoke(document) {
+    const confirmed = window.confirm(`Revoke ${document.number}? This will invalidate its QR code.`)
+
+    if (!confirmed) {
+      return
+    }
+
+    try {
+      await revokeCertificationDocument(document.document_kind, document.id)
+      toast.success('Document revoked')
+      await documentsQuery.refetch()
+      if (preview?.id === document.id) {
+        setPreview({ ...preview, status: 'revoked' })
+      }
+    } catch (error) {
+      toast.error(error.response?.data?.message ?? 'Unable to revoke document')
+    }
+  }
+
+  async function handleRenew(document) {
+    const confirmed = window.confirm(`Renew ${document.number}? A new document will be issued and the current one will be expired.`)
+
+    if (!confirmed) {
+      return
+    }
+
+    try {
+      await renewCertificationDocument(document.document_kind, document.id)
+      toast.success('Document renewed')
+      setPreview(null)
+      await documentsQuery.refetch()
+    } catch (error) {
+      toast.error(error.response?.data?.message ?? 'Unable to renew document')
+    }
+  }
+
+  function openPdf(document) {
+    window.open(certificationPdfUrl(document.document_kind, document.id), '_blank')
+  }
+
+  function verificationUrl(code) {
+    return `${window.location.origin}/verify/${code}`
   }
 
   function printPreview() {
@@ -269,9 +337,14 @@ export default function CertificationsPage() {
     <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="text-2xl font-semibold tracking-tight">
-            Certifications & Clearances
-          </h2>
+          <div className="flex items-center gap-2">
+            <h2 className="text-2xl font-semibold tracking-tight">
+              Certifications & Clearances
+            </h2>
+            {documentsQuery.isFetching && !loading && (
+              <span className="text-xs text-muted-foreground">Refreshing...</span>
+            )}
+          </div>
           <p className="text-sm text-muted-foreground">
             Review inspection results, issue documents, and verify QR codes
           </p>
@@ -386,6 +459,54 @@ export default function CertificationsPage() {
                           >
                             View
                           </Button>
+                          <Button
+                            variant="outline"
+                            size="icon-sm"
+                            aria-label="Download PDF"
+                            onClick={() => openPdf(document)}
+                          >
+                            <Download className="size-4" />
+                          </Button>
+                          {document.status === 'pending' && (
+                            <Button
+                              variant="outline"
+                              size="icon-sm"
+                              aria-label="Approve document"
+                              onClick={() => handleApprove(document)}
+                            >
+                              <ShieldCheck className="size-4" />
+                            </Button>
+                          )}
+                          {document.status === 'active' && (
+                            <>
+                              <Button
+                                variant="outline"
+                                size="icon-sm"
+                                aria-label="Revoke document"
+                                onClick={() => handleRevoke(document)}
+                              >
+                                <XCircle className="size-4" />
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="icon-sm"
+                                aria-label="Renew document"
+                                onClick={() => handleRenew(document)}
+                              >
+                                <RefreshCw className="size-4" />
+                              </Button>
+                            </>
+                          )}
+                          {document.status === 'expired' && (
+                            <Button
+                              variant="outline"
+                              size="icon-sm"
+                              aria-label="Renew document"
+                              onClick={() => handleRenew(document)}
+                            >
+                              <RefreshCw className="size-4" />
+                            </Button>
+                          )}
                           <Button
                             variant="outline"
                             size="icon-sm"
@@ -569,18 +690,28 @@ export default function CertificationsPage() {
                   <Detail label="Issued By" value={preview.issuer?.name} />
                 </div>
 
-                <div className="mt-6 rounded-lg bg-muted p-3 text-center text-sm">
-                  <p className="font-medium">QR Verification Code</p>
-                  <p className="mt-1 font-mono">{preview.qr_code?.code ?? 'Pending'}</p>
-                  {preview.qr_code?.code && (
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      Verify at /api/v1/verify/{preview.qr_code.code}
-                    </p>
+                <div className="mt-6 flex flex-col items-center gap-3 rounded-lg bg-muted p-4 text-center text-sm">
+                  {preview.qr_code?.code ? (
+                    <>
+                      <QrCode value={verificationUrl(preview.qr_code.code)} size={120} />
+                      <div>
+                        <p className="font-medium">Scan to verify</p>
+                        <p className="mt-1 break-all font-mono text-xs">
+                          {verificationUrl(preview.qr_code.code)}
+                        </p>
+                      </div>
+                    </>
+                  ) : (
+                    <p className="font-medium">QR code pending</p>
                   )}
                 </div>
               </div>
 
-              <DialogFooter>
+              <DialogFooter className="gap-2">
+                <Button variant="outline" onClick={() => openPdf(preview)}>
+                  <Download className="size-4" />
+                  Download PDF
+                </Button>
                 <Button variant="outline" onClick={printPreview}>
                   <Printer className="size-4" />
                   Print / Save PDF

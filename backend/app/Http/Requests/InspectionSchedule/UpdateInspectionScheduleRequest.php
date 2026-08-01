@@ -14,7 +14,7 @@ class UpdateInspectionScheduleRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'establishment_id' => ['required', 'exists:establishments,id'],
+            'establishment_id' => ['nullable', 'exists:establishments,id'],
             'inspector_id' => ['required', 'exists:users,id'],
             'scheduled_date' => ['required', 'date'],
             'scheduled_time' => ['nullable', 'date_format:H:i'],

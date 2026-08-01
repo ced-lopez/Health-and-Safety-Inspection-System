@@ -5,9 +5,10 @@ namespace App\Http\Controllers\Api;
 use App\Http\Resources\ChecklistResource;
 use App\Http\Resources\InspectionResultResource;
 use App\Models\Checklist;
-use App\Models\Inspection;
-use App\Models\InspectionSchedule;
 use App\Models\InspectionResult;
+use App\Models\InspectionSchedule;
+use App\Services\AuditLogger;
+use App\Services\InspectionSyncService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -15,7 +16,7 @@ class ComplianceChecklistController extends BaseApiController
 {
     public function show(InspectionSchedule $inspectionSchedule): JsonResponse
     {
-        $inspection = $this->inspectionForSchedule($inspectionSchedule);
+        $inspection = InspectionSyncService::sync($inspectionSchedule);
 
         $checklists = Checklist::query()
             ->where('is_active', true)
@@ -51,7 +52,7 @@ class ComplianceChecklistController extends BaseApiController
             'evidence_files.*.*' => ['file', 'image', 'max:5120'],
         ]);
 
-        $inspection = $this->inspectionForSchedule($inspectionSchedule);
+        $inspection = InspectionSyncService::sync($inspectionSchedule);
         $savedIds = [];
 
         foreach ($validated['results'] as $result) {
@@ -88,6 +89,15 @@ class ComplianceChecklistController extends BaseApiController
             $savedIds[] = $saved->id;
         }
 
+        AuditLogger::log(
+            $request->user(),
+            'Inspections',
+            'Checklist Saved',
+            'Saved compliance checklist for inspection #'.$inspection->id.' ('.count($savedIds).' item(s))',
+            $inspection,
+            $request,
+        );
+
         $results = InspectionResult::query()
             ->whereIn('id', $savedIds)
             ->with(['checklistItem', 'assessor.role'])
@@ -96,19 +106,6 @@ class ComplianceChecklistController extends BaseApiController
         return $this->success(
             InspectionResultResource::collection($results),
             'Compliance checklist saved successfully'
-        );
-    }
-
-    private function inspectionForSchedule(InspectionSchedule $schedule): Inspection
-    {
-        return Inspection::query()->firstOrCreate(
-            ['inspection_schedule_id' => $schedule->id],
-            [
-                'establishment_id' => $schedule->establishment_id,
-                'inspector_id' => $schedule->inspector_id,
-                'inspection_date' => $schedule->scheduled_date,
-                'status' => $schedule->status,
-            ]
         );
     }
 }

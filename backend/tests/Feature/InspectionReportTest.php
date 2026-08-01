@@ -18,9 +18,12 @@ class InspectionReportTest extends TestCase
 {
     use RefreshDatabase;
 
-    protected User $healthOfficer;
+    protected User $barangayStaff;
+
     protected User $inspector;
+
     protected InspectionSchedule $schedule;
+
     protected Inspection $inspection;
 
     protected function setUp(): void
@@ -29,7 +32,7 @@ class InspectionReportTest extends TestCase
         $this->seed(RoleSeeder::class);
 
         $admin = $this->makeUser('administrator', 'admin@example.com');
-        $this->healthOfficer = $this->makeUser('health_officer', 'health@example.com');
+        $this->barangayStaff = $this->makeUser('barangay_staff', 'staff@example.com');
         $this->inspector = $this->makeUser('inspector', 'inspector@example.com');
 
         $establishment = Establishment::query()->create([
@@ -110,9 +113,9 @@ class InspectionReportTest extends TestCase
             ->assertJsonPath('data.results.0.checklist_name', 'Fire Safety Checklist');
     }
 
-    public function test_health_officer_can_update_report_assessment_and_recommendations(): void
+    public function test_barangay_staff_can_update_report_assessment_and_recommendations(): void
     {
-        $this->actingAs($this->healthOfficer, 'sanctum')
+        $this->actingAs($this->barangayStaff, 'sanctum')
             ->putJson("/api/v1/inspections/schedules/{$this->schedule->id}/report", [
                 'overall_assessment' => 'Generally compliant with minor corrections.',
                 'recommendations' => 'Clear emergency exit path within 24 hours.',

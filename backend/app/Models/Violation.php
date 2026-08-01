@@ -2,20 +2,30 @@
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\MorphMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
-#[Fillable([
-    'inspection_id', 'establishment_id', 'inspection_result_id',
-    'reported_by', 'assigned_to', 'title', 'description',
-    'severity', 'status', 'correction_deadline', 'resolved_at', 'resolved_by',
-])]
 class Violation extends Model
 {
     use SoftDeletes;
+
+    protected $fillable = [
+        'inspection_id',
+        'establishment_id',
+        'inspection_result_id',
+        'reported_by',
+        'assigned_to',
+        'title',
+        'description',
+        'severity',
+        'status',
+        'correction_deadline',
+        'resolved_at',
+        'resolved_by',
+    ];
 
     protected function casts(): array
     {
@@ -60,7 +70,7 @@ class Violation extends Model
         return $this->hasMany(ViolationEvidence::class);
     }
 
-    public function documents(): \Illuminate\Database\Eloquent\Relations\MorphMany
+    public function documents(): MorphMany
     {
         return $this->morphMany(Document::class, 'documentable');
     }

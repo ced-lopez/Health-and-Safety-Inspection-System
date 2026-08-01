@@ -18,8 +18,11 @@ class ViolationTrackingTest extends TestCase
     use RefreshDatabase;
 
     protected User $admin;
-    protected User $healthOfficer;
+
+    protected User $barangayStaff;
+
     protected User $inspector;
+
     protected Inspection $inspection;
 
     protected function setUp(): void
@@ -28,7 +31,7 @@ class ViolationTrackingTest extends TestCase
         $this->seed(RoleSeeder::class);
 
         $this->admin = $this->makeUser('administrator', 'admin@example.com');
-        $this->healthOfficer = $this->makeUser('health_officer', 'health@example.com');
+        $this->barangayStaff = $this->makeUser('barangay_staff', 'staff@example.com');
         $this->inspector = $this->makeUser('inspector', 'inspector@example.com');
 
         $establishment = Establishment::query()->create([
@@ -58,7 +61,7 @@ class ViolationTrackingTest extends TestCase
         $response = $this->actingAs($this->inspector, 'sanctum')
             ->postJson('/api/v1/violations', [
                 'inspection_id' => $this->inspection->id,
-                'assigned_to' => $this->healthOfficer->id,
+                'assigned_to' => $this->barangayStaff->id,
                 'title' => 'Blocked emergency exit',
                 'description' => 'Rear emergency exit is blocked by boxes.',
                 'severity' => 'major',
@@ -82,10 +85,10 @@ class ViolationTrackingTest extends TestCase
     {
         $violation = $this->makeViolation();
 
-        $this->actingAs($this->healthOfficer, 'sanctum')
+        $this->actingAs($this->barangayStaff, 'sanctum')
             ->putJson("/api/v1/violations/{$violation->id}", [
                 'inspection_id' => $this->inspection->id,
-                'assigned_to' => $this->healthOfficer->id,
+                'assigned_to' => $this->barangayStaff->id,
                 'title' => $violation->title,
                 'description' => $violation->description,
                 'severity' => 'minor',
@@ -97,7 +100,7 @@ class ViolationTrackingTest extends TestCase
 
         $this->assertDatabaseHas('violations', [
             'id' => $violation->id,
-            'resolved_by' => $this->healthOfficer->id,
+            'resolved_by' => $this->barangayStaff->id,
         ]);
 
         $this->assertNotNull($violation->refresh()->resolved_at);
@@ -145,7 +148,7 @@ class ViolationTrackingTest extends TestCase
             'inspection_id' => $this->inspection->id,
             'establishment_id' => $this->inspection->establishment_id,
             'reported_by' => $this->inspector->id,
-            'assigned_to' => $this->healthOfficer->id,
+            'assigned_to' => $this->barangayStaff->id,
             'title' => 'Improper waste disposal',
             'description' => 'Waste bins are not labeled.',
             'severity' => 'minor',

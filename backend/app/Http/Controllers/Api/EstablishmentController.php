@@ -6,6 +6,7 @@ use App\Http\Requests\Establishment\StoreEstablishmentRequest;
 use App\Http\Requests\Establishment\UpdateEstablishmentRequest;
 use App\Http\Resources\EstablishmentResource;
 use App\Models\Establishment;
+use App\Services\AuditLogger;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -16,12 +17,12 @@ class EstablishmentController extends BaseApiController
         $query = Establishment::query();
 
         if ($request->filled('search')) {
-            $search = '%' . strtolower($request->string('search')->trim()->toString()) . '%';
+            $search = '%'.strtolower($request->string('search')->trim()->toString()).'%';
 
             $query->where(function ($q) use ($search) {
                 $q->whereRaw('LOWER(name) LIKE ?', [$search])
-                  ->orWhereRaw('LOWER(owner_name) LIKE ?', [$search])
-                  ->orWhereRaw('LOWER(registration_number) LIKE ?', [$search]);
+                    ->orWhereRaw('LOWER(owner_name) LIKE ?', [$search])
+                    ->orWhereRaw('LOWER(registration_number) LIKE ?', [$search]);
             });
         }
 
@@ -61,6 +62,20 @@ class EstablishmentController extends BaseApiController
     {
         $establishment = Establishment::query()->create($request->validated());
 
+        AuditLogger::log(
+            $request->user(),
+            'Establishments',
+            'Created',
+            "Registered establishment {$establishment->name}",
+            $establishment,
+            $request,
+            newValues: [
+                'name' => $establishment->name,
+                'registration_number' => $establishment->registration_number,
+                'status' => $establishment->status,
+            ],
+        );
+
         return $this->success(
             new EstablishmentResource($establishment),
             'Establishment registered successfully',
@@ -78,7 +93,28 @@ class EstablishmentController extends BaseApiController
 
     public function update(UpdateEstablishmentRequest $request, Establishment $establishment): JsonResponse
     {
+        $old = [
+            'name' => $establishment->name,
+            'status' => $establishment->status,
+            'business_type' => $establishment->business_type,
+        ];
+
         $establishment->update($request->validated());
+
+        AuditLogger::log(
+            $request->user(),
+            'Establishments',
+            'Updated',
+            "Updated establishment {$establishment->name}",
+            $establishment,
+            $request,
+            oldValues: $old,
+            newValues: [
+                'name' => $establishment->name,
+                'status' => $establishment->status,
+                'business_type' => $establishment->business_type,
+            ],
+        );
 
         return $this->success(
             new EstablishmentResource($establishment),
@@ -89,6 +125,16 @@ class EstablishmentController extends BaseApiController
     public function destroy(Establishment $establishment): JsonResponse
     {
         $establishment->delete();
+
+        AuditLogger::log(
+            request()->user(),
+            'Establishments',
+            'Deleted',
+            "Archived establishment {$establishment->name} (ID {$establishment->id})",
+            $establishment,
+            request(),
+            newValues: ['deleted_at' => now()->toDateTimeString()],
+        );
 
         return $this->success(
             null,

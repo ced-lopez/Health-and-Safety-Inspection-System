@@ -1,9 +1,10 @@
 import { Navigate } from 'react-router-dom'
 
 import { useAuth } from '@/context/AuthContext'
+import { getHomePath } from '@/utils/permissions'
 
 export function GuestRoute({ children }) {
-  const { isAuthenticated, loading } = useAuth()
+  const { isAuthenticated, loading, user } = useAuth()
 
   if (loading) {
     return (
@@ -14,7 +15,7 @@ export function GuestRoute({ children }) {
   }
 
   if (isAuthenticated) {
-    return <Navigate to="/dashboard" replace />
+    return <Navigate to={getHomePath(user?.role?.slug)} replace />
   }
 
   return children
