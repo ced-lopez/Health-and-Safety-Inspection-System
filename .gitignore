@@ -1,27 +1,63 @@
 # ---- Local / private ----
 
-# JetBrains IDE workspace (local only)
-.idea/
-
-# opencode / agent scratch files
-.agents/
-
-# Editor / OS
-.vscode/
-Thumbs.db
-.DS_Store
-
-# Private requirement prompts (not for version control)
-UPDATED PROMPT.txt
-*.prompt.txt
-
-# Local environment files (keep real secrets out of git)
+# Environment / secrets
 .env
 .env.*
 !.env.example
+*.local
 
-# ---- Internal documentation (kept locally, not versioned) ----
+# IDE / editor
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# AI / agent scratch files
+.agents/
+
+# Private requirement prompts
+UPDATED PROMPT.txt
+*.prompt.txt
+
+# Internal documentation
 docs/
 
-# Misc
-*.local
+# ---- Dependencies ----
+
+# Node
+node_modules/
+
+# Laravel
+/vendor/
+
+# Laravel storage
+/backend/storage/*.key
+/backend/storage/app/*
+/backend/storage/framework/cache/*
+/backend/storage/framework/sessions/*
+/backend/storage/framework/testing/*
+/backend/storage/framework/views/*
+/backend/storage/logs/*
+
+# Laravel public storage link contents
+/backend/public/storage
+
+# ---- Build / generated files ----
+
+# React / Vite
+/frontend/dist/
+/frontend/.vite/
+
+# Flutter
+/mobile/.dart_tool/
+/mobile/.packages
+/mobile/build/
+/mobile/.flutter-plugins
+/mobile/.flutter-plugins-dependencies
+/mobile/.pub-cache/
+
+# Coverage
+coverage/
+*.log
