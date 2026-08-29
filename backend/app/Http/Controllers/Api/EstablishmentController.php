@@ -4,7 +4,14 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Requests\Establishment\StoreEstablishmentRequest;
 use App\Http\Requests\Establishment\UpdateEstablishmentRequest;
+use App\Http\Resources\CertificationResource;
+use App\Http\Resources\ClearanceResource;
+use App\Http\Resources\DocumentResource;
 use App\Http\Resources\EstablishmentResource;
+use App\Http\Resources\InspectionResource;
+use App\Http\Resources\InspectionRequestResource;
+use App\Http\Resources\InspectionScheduleResource;
+use App\Http\Resources\ViolationResource;
 use App\Models\Establishment;
 use App\Services\AuditLogger;
 use Illuminate\Http\JsonResponse;
@@ -14,7 +21,10 @@ class EstablishmentController extends BaseApiController
 {
     public function index(Request $request): JsonResponse
     {
-        $query = Establishment::query();
+        $query = Establishment::query()
+            ->withCount('inspections')
+            ->withCount('openViolations as open_violations_count')
+            ->withMax('inspections', 'inspection_date');
 
         if ($request->filled('search')) {
             $search = '%'.strtolower($request->string('search')->trim()->toString()).'%';
@@ -26,9 +36,24 @@ class EstablishmentController extends BaseApiController
             });
         }
 
+        // Filter by address / location.
+        if ($request->filled('address')) {
+            $address = '%'.strtolower($request->string('address')->trim()->toString()).'%';
+
+            $query->where(function ($q) use ($address) {
+                $q->whereRaw('LOWER(address) LIKE ?', [$address])
+                    ->orWhereRaw('LOWER(barangay) LIKE ?', [$address]);
+            });
+        }
+
         // Filter by status (active, inactive, pending)
         if ($request->filled('status') && $request->input('status') !== 'all') {
             $query->where('status', $request->input('status'));
+        }
+
+        // Filter by establishment category
+        if ($request->filled('category') && $request->input('category') !== 'all') {
+            $query->where('category', $request->input('category'));
         }
 
         // Filter by business type
@@ -39,7 +64,7 @@ class EstablishmentController extends BaseApiController
         $perPage = min($request->integer('per_page', 10), 50);
         $establishments = $query->orderBy('name')->paginate($perPage);
 
-        // Fetch distinct business types currently in database to feed the filter dropdown dynamically
+        // Distinct business types in the database for the filter dropdown.
         $businessTypes = Establishment::query()
             ->whereNotNull('business_type')
             ->distinct()
@@ -48,6 +73,7 @@ class EstablishmentController extends BaseApiController
 
         return $this->success([
             'establishments' => EstablishmentResource::collection($establishments),
+            'categories' => EstablishmentResource::CATEGORY_LABELS,
             'business_types' => $businessTypes,
             'meta' => [
                 'current_page' => $establishments->currentPage(),
@@ -60,7 +86,10 @@ class EstablishmentController extends BaseApiController
 
     public function store(StoreEstablishmentRequest $request): JsonResponse
     {
-        $establishment = Establishment::query()->create($request->validated());
+        $validated = $request->validated();
+        $validated['category'] ??= 'food_establishment';
+
+        $establishment = Establishment::query()->create($validated);
 
         AuditLogger::log(
             $request->user(),
@@ -71,6 +100,7 @@ class EstablishmentController extends BaseApiController
             $request,
             newValues: [
                 'name' => $establishment->name,
+                'category' => $establishment->category,
                 'registration_number' => $establishment->registration_number,
                 'status' => $establishment->status,
             ],
@@ -85,10 +115,78 @@ class EstablishmentController extends BaseApiController
 
     public function show(Establishment $establishment): JsonResponse
     {
-        return $this->success(
-            new EstablishmentResource($establishment),
-            'Establishment details retrieved'
-        );
+        $establishment->load([
+            'resident',
+            'inspectionSchedules.inspector.role',
+            'inspections.inspector.role',
+            'inspections.results',
+            'violations.reportedBy.role',
+            'violations.resolvedBy.role',
+            'violations.inspection',
+            'documents.uploader.role',
+            'certifications.inspection',
+            'clearances.inspection',
+            'inspectionRequests.inspectionCategory',
+            'inspectionRequests.applicationType',
+        ]);
+
+        $summary = [
+            'inspections_count' => $establishment->inspections()->count(),
+            'open_violations_count' => $establishment->openViolations()->count(),
+            'documents_count' => $establishment->documents()->count(),
+            'certifications_count' => $establishment->certifications()->count(),
+            'clearances_count' => $establishment->clearances()->count(),
+            'last_inspection_date' => $establishment->inspections()->max('inspection_date'),
+        ];
+
+        // Compose a lightweight activity timeline from linked records.
+        $activity = collect()
+            ->merge(
+                $establishment->inspections
+                    ->map(fn ($inspection) => [
+                        'type' => 'inspection',
+                        'label' => 'Inspection '.ucfirst($inspection->status),
+                        'detail' => 'Inspected by '.($inspection->inspector?->name ?? 'unassigned'),
+                        'at' => $inspection->inspection_date?->toIso8601String(),
+                    ])
+            )
+            ->merge(
+                $establishment->documents
+                    ->map(fn ($document) => [
+                        'type' => 'document',
+                        'label' => 'Document uploaded',
+                        'detail' => $document->original_name,
+                        'at' => $document->created_at?->toIso8601String(),
+                    ])
+            )
+            ->merge(
+                $establishment->inspectionRequests
+                    ->map(fn ($request) => [
+                        'type' => 'request',
+                        'label' => 'Inspection request '.ucfirst(str_replace('_', ' ', $request->status)),
+                        'detail' => $request->request_number,
+                        'at' => $request->submitted_at?->toIso8601String() ?? $request->created_at?->toIso8601String(),
+                    ])
+            )
+            ->filter(fn ($entry) => $entry['at'] !== null)
+            ->sortByDesc('at')
+            ->take(20)
+            ->values();
+
+        return $this->success([
+            'establishment' => new EstablishmentResource($establishment),
+            'summary' => $summary,
+            'inspections' => InspectionResource::collection($establishment->inspections),
+            'inspection_schedules' => InspectionScheduleResource::collection($establishment->inspectionSchedules),
+            'violations' => ViolationResource::collection($establishment->violations),
+            'documents' => DocumentResource::collection($establishment->documents),
+            'certifications' => CertificationResource::collection($establishment->certifications),
+            'clearances' => ClearanceResource::collection($establishment->clearances),
+            'follow_ups' => InspectionRequestResource::collection(
+                $establishment->inspectionRequests->whereIn('status', ['violation_notice_issued', 'follow_up_requested', 'clearance_approved'])
+            ),
+            'activity' => $activity,
+        ], 'Establishment profile retrieved successfully');
     }
 
     public function update(UpdateEstablishmentRequest $request, Establishment $establishment): JsonResponse
@@ -96,10 +194,14 @@ class EstablishmentController extends BaseApiController
         $old = [
             'name' => $establishment->name,
             'status' => $establishment->status,
+            'category' => $establishment->category,
             'business_type' => $establishment->business_type,
         ];
 
-        $establishment->update($request->validated());
+        $validated = $request->validated();
+        $validated['category'] ??= $establishment->category ?? 'food_establishment';
+
+        $establishment->update($validated);
 
         AuditLogger::log(
             $request->user(),
@@ -112,6 +214,7 @@ class EstablishmentController extends BaseApiController
             newValues: [
                 'name' => $establishment->name,
                 'status' => $establishment->status,
+                'category' => $establishment->category,
                 'business_type' => $establishment->business_type,
             ],
         );

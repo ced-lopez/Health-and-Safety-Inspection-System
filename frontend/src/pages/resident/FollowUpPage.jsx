@@ -127,7 +127,7 @@ export default function FollowUpPage() {
             <div className="space-y-2">
               <Label>Upload Compliance Evidence</Label>
               <div className="flex items-center gap-2">
-                <Input type="file" multiple accept="image/*,.pdf" onChange={(e) => setFiles(Array.from(e.target.files ?? []))} />
+                <Input type="file" multiple accept=".jpg,.jpeg,.png,.pdf,.webp" onChange={(e) => setFiles(Array.from(e.target.files ?? []))} />
                 <FileUp className="size-4 text-muted-foreground" />
               </div>
             </div>

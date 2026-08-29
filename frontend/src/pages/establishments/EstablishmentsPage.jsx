@@ -1,6 +1,18 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Check, Edit, Plus, Search, Trash2, X } from 'lucide-react'
+import {
+  Check,
+  ChevronRight,
+  Edit,
+  MapPin,
+  Phone,
+  Plus,
+  Search,
+  Store,
+  Trash2,
+  X,
+} from 'lucide-react'
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { toast } from 'sonner'
 
 import { useAuth } from '@/context/AuthContext'
@@ -33,6 +45,11 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import {
+  ESTABLISHMENT_CATEGORIES,
+  establishmentCategoryBySlug,
+  establishmentCategoryByValue,
+} from '@/utils/constants'
+import {
   approveClaim,
   createEstablishment,
   deleteEstablishment,
@@ -44,6 +61,7 @@ import {
 
 const emptyForm = {
   name: '',
+  category: 'food_establishment',
   business_type: '',
   owner_name: '',
   address: '',
@@ -73,11 +91,45 @@ function statusVariant(status) {
   return 'outline'
 }
 
+function deriveCompliance(establishment) {
+  const openViolations = establishment.open_violations_count ?? 0
+
+  if (openViolations > 0) {
+    return { label: 'Non-Compliant', variant: 'destructive' }
+  }
+
+  if (establishment.last_inspection_date) {
+    return { label: 'Compliant', variant: 'default' }
+  }
+
+  return { label: 'Not Yet Inspected', variant: 'outline' }
+}
+
+function formatDate(value) {
+  if (!value) {
+    return '—'
+  }
+
+  const date = new Date(`${value.slice(0, 10)}T00:00:00`)
+
+  return date.toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  })
+}
+
 export default function EstablishmentsPage() {
   const { user } = useAuth()
   const queryClient = useQueryClient()
+  const navigate = useNavigate()
+  const { category: categorySlug } = useParams()
+
+  const activeCategoryValue = categorySlug
+    ? establishmentCategoryBySlug(categorySlug)?.value
+    : 'all'
+
   const [establishments, setEstablishments] = useState([])
-  const [businessTypes, setBusinessTypes] = useState([])
   const [meta, setMeta] = useState({
     current_page: 1,
     last_page: 1,
@@ -86,9 +138,10 @@ export default function EstablishmentsPage() {
   const [filters, setFilters] = useState({
     search: '',
     status: 'all',
-    business_type: 'all',
+    address: '',
     page: 1,
   })
+  const [searchInput, setSearchInput] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState(null)
@@ -128,11 +181,13 @@ export default function EstablishmentsPage() {
     () => ({
       search: filters.search || undefined,
       status: filters.status,
-      business_type: filters.business_type,
+      category:
+        activeCategoryValue === 'all' ? undefined : activeCategoryValue,
+      address: filters.address || undefined,
       page: filters.page,
       per_page: 10,
     }),
-    [filters],
+    [filters, activeCategoryValue],
   )
 
   const establishmentsQuery = useQuery({
@@ -158,9 +213,26 @@ export default function EstablishmentsPage() {
     const registry = response.data.establishments ?? []
 
     setEstablishments(registry.data ?? registry)
-    setBusinessTypes(response.data.business_types ?? [])
     setMeta(response.data.meta ?? { current_page: 1, last_page: 1, total: 0 })
   }, [establishmentsQuery.data])
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      setFilters((current) => {
+        if (current.search === searchInput) {
+          return current
+        }
+
+        return {
+          ...current,
+          search: searchInput,
+          page: 1,
+        }
+      })
+    }, 150)
+
+    return () => window.clearTimeout(timeout)
+  }, [searchInput])
 
   const loading = establishmentsQuery.isLoading && establishments.length === 0
 
@@ -172,9 +244,16 @@ export default function EstablishmentsPage() {
     }))
   }
 
+  const activeCategory = activeCategoryValue !== 'all'
+    ? establishmentCategoryByValue(activeCategoryValue)
+    : null
+
   function openCreateDialog() {
     setEditing(null)
-    setForm(emptyForm)
+    setForm({
+      ...emptyForm,
+      category: activeCategory?.value ?? 'food_establishment',
+    })
     setErrors({})
     setDialogOpen(true)
   }
@@ -183,6 +262,7 @@ export default function EstablishmentsPage() {
     setEditing(establishment)
     setForm({
       name: establishment.name ?? '',
+      category: establishment.category ?? 'food_establishment',
       business_type: establishment.business_type ?? '',
       owner_name: establishment.owner_name ?? '',
       address: establishment.address ?? '',
@@ -266,13 +346,16 @@ export default function EstablishmentsPage() {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <div className="flex items-center gap-2">
-            <h2 className="text-2xl font-semibold tracking-tight">Establishments</h2>
+            <h2 className="text-2xl font-semibold tracking-tight">
+              {activeCategory ? activeCategory.label : 'All Establishments'}
+            </h2>
             {establishmentsQuery.isFetching && !loading && (
               <span className="text-xs text-muted-foreground">Refreshing...</span>
             )}
           </div>
           <p className="text-sm text-muted-foreground">
-            Manage registered business establishments in Barangay 178
+            Master records of every establishment, business, and operation
+            handled and inspected in Barangay 178
           </p>
         </div>
         {canWrite && (
@@ -283,7 +366,34 @@ export default function EstablishmentsPage() {
         )}
       </div>
 
-      {canWrite && (
+      {/* Category tabs — Establishments is the parent module and the four
+          categories are the filters under it. */}
+      <div className="flex flex-wrap gap-2">
+        {[{ href: '/establishments', label: 'All Establishments', value: 'all' }, ...ESTABLISHMENT_CATEGORIES].map(
+          (category) => {
+            const isActive =
+              (category.value === 'all' && activeCategoryValue === 'all') ||
+              (category.value !== 'all' &&
+                activeCategoryValue === category.value)
+
+            return (
+              <Button
+                key={category.href}
+                variant={isActive ? 'default' : 'outline'}
+                size="sm"
+                nativeButton={false}
+                render={<Link to={category.href} />}
+                className="h-8"
+              >
+                <Store className="size-3.5" />
+                {category.label}
+              </Button>
+            )
+          },
+        )}
+      </div>
+
+      {canWrite && (claimsQuery.data ?? []).length > 0 && (
         <Card>
           <CardHeader>
             <CardTitle>Pending Claims</CardTitle>
@@ -292,63 +402,52 @@ export default function EstablishmentsPage() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            {claimsQuery.isLoading ? (
-              <div className="space-y-3">
-                <Skeleton className="h-10 w-full" />
-                <Skeleton className="h-10 w-full" />
-              </div>
-            ) : (claimsQuery.data ?? []).length === 0 ? (
-              <p className="py-6 text-center text-sm text-muted-foreground">
-                No pending establishment claims.
-              </p>
-            ) : (
-              <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Business</TableHead>
-                      <TableHead>Owner</TableHead>
-                      <TableHead>Claimed By</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Business</TableHead>
+                    <TableHead>Owner</TableHead>
+                    <TableHead>Claimed By</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {(claimsQuery.data ?? []).map((establishment) => (
+                    <TableRow key={establishment.id}>
+                      <TableCell>
+                        <div className="font-medium">{establishment.name}</div>
+                        <div className="text-xs text-muted-foreground">
+                          {establishment.business_type} - {establishment.address}
+                        </div>
+                      </TableCell>
+                      <TableCell>{establishment.owner_name}</TableCell>
+                      <TableCell>{establishment.resident?.name ?? 'N/A'}</TableCell>
+                      <TableCell>
+                        <div className="flex justify-end gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleClaimReview(establishment, 'approve')}
+                          >
+                            <Check className="size-4" />
+                            Approve
+                          </Button>
+                          <Button
+                            variant="destructive"
+                            size="sm"
+                            onClick={() => handleClaimReview(establishment, 'reject')}
+                          >
+                            <X className="size-4" />
+                            Reject
+                          </Button>
+                        </div>
+                      </TableCell>
                     </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {(claimsQuery.data ?? []).map((establishment) => (
-                      <TableRow key={establishment.id}>
-                        <TableCell>
-                          <div className="font-medium">{establishment.name}</div>
-                          <div className="text-xs text-muted-foreground">
-                            {establishment.business_type} - {establishment.address}
-                          </div>
-                        </TableCell>
-                        <TableCell>{establishment.owner_name}</TableCell>
-                        <TableCell>{establishment.resident?.name ?? 'N/A'}</TableCell>
-                        <TableCell>
-                          <div className="flex justify-end gap-2">
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => handleClaimReview(establishment, 'approve')}
-                            >
-                              <Check className="size-4" />
-                              Approve
-                            </Button>
-                            <Button
-                              variant="destructive"
-                              size="sm"
-                              onClick={() => handleClaimReview(establishment, 'reject')}
-                            >
-                              <X className="size-4" />
-                              Reject
-                            </Button>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            )}
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
           </CardContent>
         </Card>
       )}
@@ -357,18 +456,27 @@ export default function EstablishmentsPage() {
         <CardHeader>
           <CardTitle>Establishment Registry</CardTitle>
           <CardDescription>
-            Search, filter, register, update, and archive establishments
+            Search, filter, register, update, and open establishment profiles
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid gap-3 lg:grid-cols-[1fr_180px_220px]">
+          <div className="grid gap-3 lg:grid-cols-[1fr_1fr_180px]">
             <div className="relative">
               <Search className="absolute left-2.5 top-2 size-4 text-muted-foreground" />
               <Input
                 className="pl-8"
                 placeholder="Search name, owner, or registration no."
-                value={filters.search}
-                onChange={(event) => updateFilter('search', event.target.value)}
+                value={searchInput}
+                onChange={(event) => setSearchInput(event.target.value)}
+              />
+            </div>
+            <div className="relative">
+              <MapPin className="absolute left-2.5 top-2 size-4 text-muted-foreground" />
+              <Input
+                className="pl-8"
+                placeholder="Filter by address / location"
+                value={filters.address}
+                onChange={(event) => updateFilter('address', event.target.value)}
               />
             </div>
             <select
@@ -381,18 +489,6 @@ export default function EstablishmentsPage() {
               <option value="pending">Pending</option>
               <option value="inactive">Inactive</option>
             </select>
-            <select
-              className="h-8 rounded-lg border border-input bg-background px-2.5 text-sm"
-              value={filters.business_type}
-              onChange={(event) => updateFilter('business_type', event.target.value)}
-            >
-              <option value="all">All business types</option>
-              {businessTypes.map((type) => (
-                <option key={type} value={type}>
-                  {type}
-                </option>
-              ))}
-            </select>
           </div>
 
           {loading ? (
@@ -402,63 +498,131 @@ export default function EstablishmentsPage() {
               <Skeleton className="h-10 w-full" />
             </div>
           ) : establishments.length === 0 ? (
-            <p className="py-8 text-center text-sm text-muted-foreground">
-              No establishments found.
-            </p>
+            <div className="py-10 text-center">
+              <Store className="mx-auto size-8 text-muted-foreground/40" />
+              <p className="mt-3 text-sm font-medium">
+                No establishments found
+              </p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {activeCategory
+                  ? `There are no ${activeCategory.label.toLowerCase()} establishments matching your filters yet.`
+                  : 'Try adjusting your search or add a new establishment.'}
+              </p>
+              {canWrite && (
+                <Button variant="outline" size="sm" className="mt-4" onClick={openCreateDialog}>
+                  <Plus className="size-4" />
+                  Add Establishment
+                </Button>
+              )}
+            </div>
           ) : (
             <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Business</TableHead>
-                    <TableHead>Owner</TableHead>
-                    <TableHead>Registration</TableHead>
+                    <TableHead>Establishment</TableHead>
+                    <TableHead>Category</TableHead>
+                    <TableHead>Owner / Operator</TableHead>
+                    <TableHead>Address</TableHead>
+                    <TableHead>Contact</TableHead>
                     <TableHead>Status</TableHead>
+                    <TableHead>Last Inspection</TableHead>
+                    <TableHead>Compliance</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {establishments.map((establishment) => (
-                    <TableRow key={establishment.id}>
-                      <TableCell>
-                        <div className="font-medium">{establishment.name}</div>
-                        <div className="text-xs text-muted-foreground">
-                          {establishment.business_type} - {establishment.address}
-                        </div>
-                      </TableCell>
-                      <TableCell>{establishment.owner_name}</TableCell>
-                      <TableCell>{establishment.registration_number}</TableCell>
-                      <TableCell>
-                        <Badge variant={statusVariant(establishment.status)}>
-                          {statusLabels[establishment.status] ?? establishment.status}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex justify-end gap-2">
-                          {canWrite && (
+                  {establishments.map((establishment) => {
+                    const compliance = deriveCompliance(establishment)
+                    const category = establishmentCategoryByValue(
+                      establishment.category,
+                    )
+
+                    return (
+                      <TableRow
+                        key={establishment.id}
+                        className="group cursor-pointer"
+                        onClick={() =>
+                          navigate(`/establishments/${establishment.id}`)
+                        }
+                      >
+                        <TableCell>
+                          <div className="font-medium">
+                            {establishment.name}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            {establishment.registration_number ?? 'No registration'}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="secondary">
+                            {category?.label ??
+                              establishment.category_label ??
+                              establishment.category}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>{establishment.owner_name}</TableCell>
+                        <TableCell className="max-w-[220px]">
+                          <span className="line-clamp-2 text-sm text-muted-foreground">
+                            {establishment.address}
+                          </span>
+                        </TableCell>
+                        <TableCell>
+                          <span className="inline-flex items-center gap-1.5 text-sm">
+                            <Phone className="size-3.5 text-muted-foreground" />
+                            {establishment.contact_number ?? '—'}
+                          </span>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={statusVariant(establishment.status)}>
+                            {statusLabels[establishment.status] ?? establishment.status}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-sm">
+                          {formatDate(establishment.last_inspection_date)}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={compliance.variant}>
+                            {compliance.label}
+                          </Badge>
+                        </TableCell>
+                        <TableCell onClick={(event) => event.stopPropagation()}>
+                          <div className="flex items-center justify-end gap-2">
                             <Button
                               variant="outline"
                               size="icon-sm"
-                              aria-label={`Edit ${establishment.name}`}
-                              onClick={() => openEditDialog(establishment)}
+                              aria-label={`View ${establishment.name}`}
+                              onClick={() =>
+                                navigate(`/establishments/${establishment.id}`)
+                              }
                             >
-                              <Edit className="size-4" />
+                              <ChevronRight className="size-4" />
                             </Button>
-                          )}
-                          {canArchive && (
-                            <Button
-                              variant="destructive"
-                              size="icon-sm"
-                              aria-label={`Archive ${establishment.name}`}
-                              onClick={() => handleArchive(establishment)}
-                            >
-                              <Trash2 className="size-4" />
-                            </Button>
-                          )}
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                            {canWrite && (
+                              <Button
+                                variant="outline"
+                                size="icon-sm"
+                                aria-label={`Edit ${establishment.name}`}
+                                onClick={() => openEditDialog(establishment)}
+                              >
+                                <Edit className="size-4" />
+                              </Button>
+                            )}
+                            {canArchive && (
+                              <Button
+                                variant="destructive"
+                                size="icon-sm"
+                                aria-label={`Archive ${establishment.name}`}
+                                onClick={() => handleArchive(establishment)}
+                              >
+                                <Trash2 className="size-4" />
+                              </Button>
+                            )}
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    )
+                  })}
                 </TableBody>
               </Table>
             </div>
@@ -498,26 +662,45 @@ export default function EstablishmentsPage() {
               {editing ? 'Edit Establishment' : 'Add Establishment'}
             </DialogTitle>
             <DialogDescription>
-              Keep registry details accurate for inspection scheduling and reporting.
+              Register the establishment under the appropriate category so the
+              correct inspection checklist applies.
             </DialogDescription>
           </DialogHeader>
 
           <form className="space-y-4" onSubmit={handleSubmit}>
             <div className="grid gap-4 sm:grid-cols-2">
               <Field
-                label="Business name"
+                label="Establishment name"
                 value={form.name}
                 error={errors.name}
                 onChange={(value) => updateForm('name', value)}
               />
+              <div className="space-y-2">
+                <Label>Category</Label>
+                <select
+                  className="h-8 w-full rounded-lg border border-input bg-background px-2.5 text-sm"
+                  value={form.category}
+                  onChange={(event) => updateForm('category', event.target.value)}
+                >
+                  {ESTABLISHMENT_CATEGORIES.map((category) => (
+                    <option key={category.value} value={category.value}>
+                      {category.label}
+                    </option>
+                  ))}
+                </select>
+                {errors.category && (
+                  <p className="text-xs text-destructive">{errors.category[0]}</p>
+                )}
+              </div>
               <Field
                 label="Business type"
                 value={form.business_type}
                 error={errors.business_type}
+                required={false}
                 onChange={(value) => updateForm('business_type', value)}
               />
               <Field
-                label="Owner name"
+                label="Owner / operator name"
                 value={form.owner_name}
                 error={errors.owner_name}
                 onChange={(value) => updateForm('owner_name', value)}

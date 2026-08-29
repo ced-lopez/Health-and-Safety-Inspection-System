@@ -20,9 +20,11 @@ use App\Notifications\InspectorAssigned;
 use App\Notifications\MissingRequirements;
 use App\Notifications\NewApplicationSubmitted;
 use App\Notifications\NewInspectionAssignment;
+use App\Notifications\PreferredScheduleSubmitted;
 use App\Services\AuditLogger;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 
 class InspectionRequestController extends BaseApiController
@@ -40,7 +42,9 @@ class InspectionRequestController extends BaseApiController
             $query->where('resident_id', $user->id);
         }
 
-        if ($request->filled('status') && $request->input('status') !== 'all') {
+        if ($request->filled('status') && $request->input('status') === 'active') {
+            $query->whereIn('status', ['submitted', 'under_review', 'requirements_incomplete']);
+        } elseif ($request->filled('status') && $request->input('status') !== 'all') {
             $query->where('status', $request->input('status'));
         }
 
@@ -180,14 +184,6 @@ class InspectionRequestController extends BaseApiController
             'submitted_at' => now(),
         ]);
 
-        if (! $inspectionRequest->establishment_id) {
-            $establishment = $this->ensureEstablishment($inspectionRequest);
-
-            if ($establishment) {
-                $inspectionRequest->update(['establishment_id' => $establishment->id]);
-            }
-        }
-
         $inspectionRequest->load([
             'resident.role', 'inspectionCategory', 'applicationType', 'establishment',
         ]);
@@ -237,11 +233,104 @@ class InspectionRequestController extends BaseApiController
             'documents.extraction.reviewer.role',
             'inspectionAssignment.inspector.role',
             'inspectionAssignment.assignedBy.role',
+            'schedules',
         ]);
 
         return $this->success(
             new InspectionRequestResource($inspectionRequest),
             'Inspection request retrieved successfully'
+        );
+    }
+
+    public function setPreferredSchedule(Request $request, InspectionRequest $inspectionRequest): JsonResponse
+    {
+        $user = $request->user();
+        $isStaff = in_array($user->role?->slug, ['administrator', 'barangay_staff'], true);
+
+        if (! $isStaff && $inspectionRequest->resident_id !== $user->id) {
+            return $this->error('You can only propose a schedule for your own applications', 403);
+        }
+
+        $validated = $request->validate([
+            'preferred_schedule_at' => ['required', 'date', 'after:now'],
+        ]);
+
+        if (in_array($inspectionRequest->status, ['inspection_completed', 'violation_notice_issued', 'follow_up_requested', 'clearance_approved', 'rejected', 'cancelled'], true)) {
+            return $this->error('You can no longer propose a schedule for this application.', 422);
+        }
+
+        if ($inspectionRequest->schedules()->whereNotNull('scheduled_at')->exists()) {
+            return $this->error('This application already has a confirmed inspection schedule.', 422);
+        }
+
+        $inspectionRequest->update([
+            'preferred_schedule_at' => Carbon::parse($validated['preferred_schedule_at']),
+        ]);
+
+        AuditLogger::log(
+            $user,
+            'Inspection Requests',
+            'Schedule Proposed',
+            "Preferred schedule proposed for request {$inspectionRequest->request_number}",
+            $inspectionRequest,
+            $request,
+            newValues: [
+                'preferred_schedule_at' => $inspectionRequest->preferred_schedule_at->toIso8601String(),
+            ],
+            event: 'inspection_request.preferred_schedule',
+        );
+
+        $inspectionRequest->load([
+            'resident.role', 'inspectionCategory', 'applicationType', 'establishment', 'reviewedBy.role',
+            'schedules',
+        ]);
+
+        if (! $isStaff) {
+            $this->notifyRoles(new PreferredScheduleSubmitted(
+                $inspectionRequest->request_number,
+                $inspectionRequest->business_name ?: $inspectionRequest->applicant_name,
+                $inspectionRequest->applicant_name,
+                $inspectionRequest->preferred_schedule_at->format('M d, Y \a\t h:i A'),
+            ), ['administrator', 'barangay_staff']);
+        }
+
+        return $this->success(
+            new InspectionRequestResource($inspectionRequest),
+            'Preferred schedule submitted. A barangay staff will confirm your inspection schedule.'
+        );
+    }
+
+    public function clearPreferredSchedule(Request $request, InspectionRequest $inspectionRequest): JsonResponse
+    {
+        $user = $request->user();
+        $isStaff = in_array($user->role?->slug, ['administrator', 'barangay_staff'], true);
+
+        if (! $isStaff && $inspectionRequest->resident_id !== $user->id) {
+            return $this->error('You can only clear the schedule proposal for your own applications', 403);
+        }
+
+        if ($inspectionRequest->schedules()->whereNotNull('scheduled_at')->exists()) {
+            return $this->error('This application already has a confirmed inspection schedule.', 422);
+        }
+
+        $inspectionRequest->update(['preferred_schedule_at' => null]);
+
+        AuditLogger::log(
+            $user,
+            'Inspection Requests',
+            'Schedule Proposal Removed',
+            "Preferred schedule proposal removed for request {$inspectionRequest->request_number}",
+            $inspectionRequest,
+            $request,
+            event: 'inspection_request.preferred_schedule_removed',
+        );
+
+        return $this->success(
+            new InspectionRequestResource($inspectionRequest->load([
+                'resident.role', 'inspectionCategory', 'applicationType', 'establishment', 'reviewedBy.role',
+                'schedules',
+            ])),
+            'Preferred schedule removed'
         );
     }
 
@@ -378,7 +467,13 @@ class InspectionRequestController extends BaseApiController
                 'inspectionAssignment.inspector.role',
                 'inspectionAssignment.assignedBy.role',
             ])
-            ->withCount('documents')
+            ->withCount('documents');
+
+        if ($request->boolean('pending_schedule')) {
+            $queue->whereDoesntHave('schedules');
+        }
+
+        $queue = $queue
             ->orderByRaw("CASE WHEN status = 'approved_for_inspection' THEN 0 ELSE 1 END")
             ->orderBy('reviewed_at')
             ->paginate($perPage);
@@ -539,37 +634,5 @@ class InspectionRequestController extends BaseApiController
         }
 
         return null;
-    }
-
-    private function ensureEstablishment(InspectionRequest $inspectionRequest): ?Establishment
-    {
-        $name = trim((string) ($inspectionRequest->business_name ?: $inspectionRequest->applicant_name));
-
-        if ($name === '') {
-            return null;
-        }
-
-        $existing = Establishment::query()
-            ->where('resident_id', $inspectionRequest->resident_id)
-            ->whereRaw('LOWER(name) = ?', [mb_strtolower($name)])
-            ->first();
-
-        if ($existing) {
-            return $existing;
-        }
-
-        return Establishment::query()->create([
-            'name' => $name,
-            'business_type' => $inspectionRequest->inspectionCategory?->name ?? 'General',
-            'owner_name' => $inspectionRequest->applicant_name,
-            'address' => $inspectionRequest->applicant_address,
-            'barangay' => 'Barangay 178',
-            'contact_number' => $inspectionRequest->contact_number,
-            'email' => $inspectionRequest->email,
-            'registration_number' => 'BRGY-EST-'.now()->format('Ymd').'-'.strtoupper(substr(uniqid(), -4)),
-            'status' => 'active',
-            'resident_id' => $inspectionRequest->resident_id,
-            'ownership_status' => 'linked',
-        ]);
     }
 }

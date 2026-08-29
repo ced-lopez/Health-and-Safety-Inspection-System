@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { CheckCircle2, Eye, ListChecks, Search, UserCheck, XCircle } from 'lucide-react'
+import { CalendarClock, CheckCircle2, Eye, ListChecks, Loader2, Search, UserCheck, XCircle } from 'lucide-react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { toast } from 'sonner'
 
@@ -11,9 +11,8 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { fetchInspectionRequests, fetchInspectionRequest, reviewInspectionRequest, assignInspectionRequest, fetchInspectionQueue, fetchRequestRequirements } from '@/services/inspectionRequestService'
+import { fetchInspectionRequests, fetchInspectionRequest, reviewInspectionRequest, assignInspectionRequest, fetchRequestRequirements, confirmPreferredSchedule } from '@/services/inspectionRequestService'
 import api from '@/services/api'
 
 const statusLabels = {
@@ -82,15 +81,36 @@ function applicantName(req) {
   return req?.resident?.name ?? req?.applicant_name ?? 'N/A'
 }
 
+const terminalStatuses = ['inspection_completed', 'violation_notice_issued', 'follow_up_requested', 'clearance_approved', 'rejected', 'cancelled']
+
+function formatSchedule(value) {
+  if (!value) return 'N/A'
+  return new Date(value).toLocaleString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+}
+
+function toDateInput(value) {
+  if (!value) return ''
+  return new Date(value).toLocaleDateString('en-CA')
+}
+
+function toTimeInput(value) {
+  if (!value) return ''
+  const d = new Date(value)
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
+function hasConfirmedSchedule(req) {
+  return (req?.schedules?.length ?? 0) > 0
+}
+
 export default function InspectionRequestsPage() {
   const { user } = useAuth()
   const roleSlug = user?.role?.slug
   const canReview = ['administrator', 'barangay_staff'].includes(roleSlug)
 
-  const [view, setView] = useState('requests')
   const [requests, setRequests] = useState([])
   const [meta, setMeta] = useState({ current_page: 1, last_page: 1, total: 0 })
-  const [filters, setFilters] = useState({ search: '', status: 'all', page: 1 })
+  const [filters, setFilters] = useState({ search: '', status: 'active', page: 1 })
   const [searchInput, setSearchInput] = useState('')
 
   const [detailOpen, setDetailOpen] = useState(false)
@@ -112,6 +132,10 @@ export default function InspectionRequestsPage() {
   const [assigneeId, setAssigneeId] = useState('')
   const [assignSubmitting, setAssignSubmitting] = useState(false)
 
+  const [confirmOpen, setConfirmOpen] = useState(false)
+  const [confirmForm, setConfirmForm] = useState({ inspector_id: '', date: '', time: '' })
+  const [confirmSubmitting, setConfirmSubmitting] = useState(false)
+
   const queryParams = useMemo(() => ({
     search: filters.search || undefined,
     status: filters.status !== 'all' ? filters.status : undefined,
@@ -124,27 +148,13 @@ export default function InspectionRequestsPage() {
     placeholderData: keepPreviousData,
   })
 
-  const { data: queueData, isError: queueError, isLoading: queueLoading, refetch: refetchQueue } = useQuery({
-    queryKey: ['inspection-queue'],
-    queryFn: () => fetchInspectionQueue({ per_page: 20 }),
-    enabled: view === 'queue',
-  })
-
-  const [queue, setQueue] = useState([])
-
   useEffect(() => { if (isError) toast.error('Unable to load inspection requests') }, [isError])
-  useEffect(() => { if (queueError) toast.error('Unable to load inspection queue') }, [queueError])
   useEffect(() => {
     if (!data) return
     const raw = data.data?.inspection_requests ?? data.data
     setRequests(Array.isArray(raw) ? raw : Array.isArray(raw?.data) ? raw.data : [])
     setMeta(data.data?.meta ?? { current_page: 1, last_page: 1, total: 0 })
   }, [data])
-  useEffect(() => {
-    if (!queueData) return
-    const raw = queueData.data?.queue ?? queueData.data
-    setQueue(Array.isArray(raw) ? raw : Array.isArray(raw?.data) ? raw.data : [])
-  }, [queueData])
   useEffect(() => {
     const t = setTimeout(() => setFilters((p) => ({ ...p, search: searchInput, page: 1 })), 150)
     return () => clearTimeout(t)
@@ -178,7 +188,6 @@ export default function InspectionRequestsPage() {
       setReviewOpen(false)
       setSelectedRequest((prev) => ({ ...prev, status: reviewDecision, remarks: reviewNotes }))
       await refetch()
-      if (view === 'queue') await refetchQueue()
     } catch (err) { toast.error(err.response?.data?.message ?? 'Unable to review') }
     finally { setReviewSubmitting(false) }
   }
@@ -205,7 +214,6 @@ export default function InspectionRequestsPage() {
       setReviewNotes('')
       setSelectedRequest((prev) => ({ ...prev, status }))
       await refetch()
-      if (view === 'queue') await refetchQueue()
     } catch (err) { toast.error(err.response?.data?.message ?? 'Unable to update request') }
     finally { setReviewSubmitting(false) }
   }
@@ -227,9 +235,42 @@ export default function InspectionRequestsPage() {
       toast.success('Inspector assigned')
       setAssignOpen(false)
       await refetch()
-      if (view === 'queue') await refetchQueue()
     } catch (err) { toast.error(err.response?.data?.message ?? 'Unable to assign') }
     finally { setAssignSubmitting(false) }
+  }
+
+  async function openConfirm(request) {
+    setSelectedRequest(request)
+    setConfirmForm({
+      inspector_id: '',
+      date: toDateInput(request.preferred_schedule_at),
+      time: toTimeInput(request.preferred_schedule_at),
+    })
+    setConfirmOpen(true)
+    try {
+      const res = await api.get('/v1/inspections/options')
+      setInspectors(res.data?.data?.inspectors ?? res.data?.inspectors ?? [])
+    } catch { toast.error('Unable to load inspectors') }
+  }
+
+  async function handleConfirmSchedule() {
+    if (!selectedRequest) return
+    setConfirmSubmitting(true)
+    try {
+      const payload = { inspector_id: confirmForm.inspector_id }
+      if (confirmForm.date && confirmForm.time) {
+        payload.scheduled_date = confirmForm.date
+        payload.scheduled_time = confirmForm.time
+      }
+      await confirmPreferredSchedule(selectedRequest.id, payload)
+      toast.success('Inspection schedule confirmed')
+      setConfirmOpen(false)
+      await refetch()
+    } catch (err) {
+      toast.error(err.response?.data?.message ?? 'Unable to confirm the schedule')
+    } finally {
+      setConfirmSubmitting(false)
+    }
   }
 
   function actionButtons(req) {
@@ -263,6 +304,13 @@ export default function InspectionRequestsPage() {
         </Button>
       )
     }
+    if (req.preferred_schedule_at && !terminalStatuses.includes(req.status) && !hasConfirmedSchedule(req)) {
+      buttons.push(
+        <Button key="confirm" variant="outline" size="sm" onClick={() => openConfirm(req)}>
+          <CalendarClock className="size-4" /> Confirm Schedule
+        </Button>
+      )
+    }
     return buttons
   }
 
@@ -273,13 +321,7 @@ export default function InspectionRequestsPage() {
         <p className="text-sm text-muted-foreground">Review, verify requirements, approve, reject, and assign inspectors</p>
       </div>
 
-      <Tabs value={view} onValueChange={setView}>
-        <TabsList>
-          <TabsTrigger value="requests">Request Queue</TabsTrigger>
-          <TabsTrigger value="queue">Inspection Queue</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="requests" className="space-y-4">
+      <div className="space-y-4">
           <Card>
             <CardHeader>
               <CardTitle>Request Registry</CardTitle>
@@ -293,6 +335,7 @@ export default function InspectionRequestsPage() {
                 </div>
                 <select className="h-8 rounded-lg border border-input bg-background px-2.5 text-sm" value={filters.status} onChange={(e) => setFilters((p) => ({ ...p, status: e.target.value, page: 1 }))}>
                   <option value="all">All statuses</option>
+                  <option value="active">Active review</option>
                   {Object.entries(statusLabels).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
                 </select>
               </div>
@@ -348,59 +391,7 @@ export default function InspectionRequestsPage() {
               </div>
             </CardContent>
           </Card>
-        </TabsContent>
-
-        <TabsContent value="queue" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Inspection Queue</CardTitle>
-              <CardDescription>Approved requests waiting for assignment and assigned inspections</CardDescription>
-            </CardHeader>
-            <CardContent>
-              {queueLoading ? (
-                <Skeleton className="h-32 w-full" />
-              ) : queue.length === 0 ? (
-                <p className="py-8 text-center text-sm text-muted-foreground">No inspections in the queue.</p>
-              ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Request No.</TableHead>
-                      <TableHead>Business</TableHead>
-                      <TableHead>Category</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Inspector</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {queue.map((req) => (
-                      <TableRow key={req.id}>
-                        <TableCell className="font-mono text-xs">{req.request_number}</TableCell>
-                        <TableCell className="font-medium">{req.business_name ?? 'N/A'}</TableCell>
-                        <TableCell>
-                          <div className="flex flex-col gap-1">
-                            <span>{categoryName(req)}</span>
-                            {subPathBadge(req)}
-                          </div>
-                        </TableCell>
-                        <TableCell><Badge variant={statusVariant(req.status)}>{statusLabels[req.status] ?? req.status}</Badge></TableCell>
-                        <TableCell>{req.inspection_assignment?.inspector?.name ?? 'Not yet assigned'}</TableCell>
-                        <TableCell className="text-right">
-                          <div className="flex justify-end gap-2 flex-wrap">
-                            <Button variant="outline" size="sm" onClick={() => openDetail(req)}><Eye className="size-4" /> View</Button>
-                            {actionButtons(req)}
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-      </Tabs>
+        </div>
 
       <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
         <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-xl">
@@ -419,6 +410,25 @@ export default function InspectionRequestsPage() {
                 <div className="sm:col-span-2"><p className="text-xs text-muted-foreground">Purpose / Remarks</p><p className="font-medium">{selectedRequest.remarks ?? 'None'}</p></div>
                 <div><p className="text-xs text-muted-foreground">Submitted</p><p className="font-medium">{formatDate(selectedRequest.submitted_at ?? selectedRequest.created_at)}</p></div>
                 <div><p className="text-xs text-muted-foreground">Inspector</p><p className="font-medium">{selectedRequest.inspection_assignment?.inspector?.name ?? 'Not assigned'}</p></div>
+                {selectedRequest.preferred_schedule_at && (
+                  <div>
+                    <p className="text-xs text-muted-foreground">Proposed Schedule</p>
+                    <p className="font-medium">
+                      <Badge variant="secondary">Proposed</Badge>{' '}
+                      <span className="text-sm">{formatSchedule(selectedRequest.preferred_schedule_at)}</span>
+                    </p>
+                  </div>
+                )}
+                {hasConfirmedSchedule(selectedRequest) && (
+                  <div>
+                    <p className="text-xs text-muted-foreground">Confirmed Schedule</p>
+                    <p className="font-medium">
+                      <Badge variant="default">Confirmed</Badge>{' '}
+                      <span className="text-sm">{formatSchedule(selectedRequest.schedules[0].scheduled_at)}</span>{' '}
+                      {selectedRequest.schedules[0].inspector?.name && <span className="text-xs text-muted-foreground">· {selectedRequest.schedules[0].inspector.name}</span>}
+                    </p>
+                  </div>
+                )}
               </div>
 
               <div className="space-y-2">
@@ -429,7 +439,7 @@ export default function InspectionRequestsPage() {
                   <div className="space-y-1.5">
                     {selectedRequest.documents.map((doc) => (
                       <div key={doc.id} className="flex items-center justify-between rounded-lg border border-border px-3 py-2 text-sm">
-                        <span className="truncate">{doc.file_name}</span>
+                        <span className="truncate">{doc.original_name ?? doc.file_name}</span>
                         <Badge variant={doc.status === 'verified' ? 'default' : doc.status === 'processed' ? 'secondary' : 'outline'}>{doc.status}</Badge>
                       </div>
                     ))}
@@ -552,6 +562,44 @@ export default function InspectionRequestsPage() {
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setAssignOpen(false)}>Cancel</Button>
               <Button onClick={handleAssign} disabled={!assigneeId || assignSubmitting}>{assignSubmitting ? 'Assigning...' : 'Assign'}</Button>
+            </DialogFooter>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader><DialogTitle>Confirm Inspection Schedule</DialogTitle><DialogDescription>{selectedRequest?.request_number} · {selectedRequest?.business_name}</DialogDescription></DialogHeader>
+          <div className="space-y-3">
+            {selectedRequest?.preferred_schedule_at && (
+              <p className="rounded-lg border border-border px-3 py-2 text-sm">
+                <span className="text-muted-foreground">Resident's proposal: </span>
+                <span className="font-medium">{formatSchedule(selectedRequest.preferred_schedule_at)}</span>
+              </p>
+            )}
+            <div className="space-y-2">
+              <Label>Inspector</Label>
+              <select className="h-8 w-full rounded-lg border border-input bg-background px-2.5 text-sm" value={confirmForm.inspector_id} onChange={(e) => setConfirmForm((p) => ({ ...p, inspector_id: e.target.value }))}>
+                <option value="">Choose inspector</option>
+                {inspectors.map((insp) => <option key={insp.id} value={insp.id}>{insp.name}</option>)}
+              </select>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label>Date</Label>
+                <Input type="date" value={confirmForm.date} onChange={(e) => setConfirmForm((p) => ({ ...p, date: e.target.value }))} />
+              </div>
+              <div className="space-y-2">
+                <Label>Time</Label>
+                <Input type="time" value={confirmForm.time} onChange={(e) => setConfirmForm((p) => ({ ...p, time: e.target.value }))} />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setConfirmOpen(false)}>Cancel</Button>
+              <Button onClick={handleConfirmSchedule} disabled={!confirmForm.inspector_id || confirmSubmitting}>
+                {confirmSubmitting ? <Loader2 className="size-4 animate-spin" /> : <CalendarClock className="size-4" />}
+                {confirmSubmitting ? 'Confirming...' : 'Confirm Schedule'}
+              </Button>
             </DialogFooter>
           </div>
         </DialogContent>

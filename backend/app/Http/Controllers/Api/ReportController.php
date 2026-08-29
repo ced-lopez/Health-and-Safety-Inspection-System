@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Models\Clearance;
 use App\Models\Inspection;
 use App\Models\InspectionRequest;
+use App\Models\InspectionResult;
 use App\Models\Violation;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -151,10 +152,173 @@ class ReportController extends BaseApiController
         ], 'Dashboard analytics retrieved successfully');
     }
 
-    private function monthExpression(string $column): string
+    public function soba(Request $request): JsonResponse
     {
-        return DB::connection()->getDriverName() === 'pgsql'
-            ? "EXTRACT(MONTH FROM {$column})"
-            : "CAST(strftime('%m', {$column}) AS INTEGER)";
+        $year = $request->integer('year', now()->year);
+        $semester = $request->integer('semester', now()->month >= 7 ? 2 : 1);
+
+        abort_unless(in_array($semester, [1, 2], true), 422, 'Semester must be 1 or 2.');
+
+        $startMonth = $semester === 1 ? 1 : 7;
+        $endMonth = $semester === 1 ? 6 : 12;
+
+        $start = now()->create($year, $startMonth, 1)->startOfDay();
+        $end = now()->create($year, $endMonth, 1)->endOfMonth()->endOfDay();
+
+        $monthNumbers = range($startMonth, $endMonth);
+
+        $monthlyRequests = $this->monthlyCounts(
+            InspectionRequest::query()
+                ->whereBetween('created_at', [$start, $end])
+                ->selectRaw($this->monthExpression('created_at').' as month')
+                ->selectRaw('COUNT(*) as total'),
+            'created_at'
+        );
+
+        $monthlyInspections = $this->monthlyCounts(
+            Inspection::query()
+                ->whereBetween('inspection_date', [$start->toDateString(), $end->toDateString()])
+                ->where('status', 'completed')
+                ->selectRaw($this->monthExpression('inspection_date').' as month')
+                ->selectRaw('COUNT(*) as total'),
+            'inspection_date'
+        );
+
+        $monthlyClearances = $this->monthlyCounts(
+            Clearance::query()
+                ->whereBetween('issue_date', [$start->toDateString(), $end->toDateString()])
+                ->selectRaw($this->monthExpression('issue_date').' as month')
+                ->selectRaw('COUNT(*) as total'),
+            'issue_date'
+        );
+
+        $monthlyViolations = $this->monthlyCounts(
+            Violation::query()
+                ->whereBetween('created_at', [$start, $end])
+                ->selectRaw($this->monthExpression('created_at').' as month')
+                ->selectRaw('COUNT(*) as total'),
+            'created_at'
+        );
+
+        $months = collect($monthNumbers)->map(fn ($month) => [
+            'month' => $month,
+            'requests' => $monthlyRequests->get($month, 0),
+            'inspections' => $monthlyInspections->get($month, 0),
+            'clearances' => $monthlyClearances->get($month, 0),
+            'violations' => $monthlyViolations->get($month, 0),
+        ]);
+
+        $requestsByStatus = InspectionRequest::query()
+            ->whereBetween('created_at', [$start, $end])
+            ->selectRaw('status, COUNT(*) as total')
+            ->groupBy('status')
+            ->pluck('total', 'status');
+
+        $requestsByCategory = InspectionRequest::query()
+            ->whereBetween('inspection_requests.created_at', [$start, $end])
+            ->join('inspection_categories', 'inspection_categories.id', '=', 'inspection_requests.inspection_category_id')
+            ->selectRaw('inspection_categories.name as category, COUNT(*) as total')
+            ->groupBy('inspection_categories.name')
+            ->orderByDesc('total')
+            ->get()
+            ->map(fn ($row) => ['category' => $row->category, 'total' => (int) $row->total]);
+
+        $violationsBySeverity = Violation::query()
+            ->whereBetween('created_at', [$start, $end])
+            ->selectRaw('severity, COUNT(*) as total')
+            ->groupBy('severity')
+            ->pluck('total', 'severity');
+
+        $violationsByStatus = Violation::query()
+            ->whereBetween('created_at', [$start, $end])
+            ->selectRaw('status, COUNT(*) as total')
+            ->groupBy('status')
+            ->pluck('total', 'status');
+
+        $compliance = InspectionResult::query()
+            ->whereBetween('created_at', [$start, $end])
+            ->selectRaw('compliance_status, COUNT(*) as total')
+            ->groupBy('compliance_status')
+            ->pluck('total', 'compliance_status');
+
+        $complianceTotal = $compliance->sum();
+        $compliant = (int) $compliance->get('compliant', 0);
+
+        $clearancesByStatus = Clearance::query()
+            ->whereBetween('issue_date', [$start->toDateString(), $end->toDateString()])
+            ->selectRaw('status, COUNT(*) as total')
+            ->groupBy('status')
+            ->pluck('total', 'status');
+
+        $expiring = Clearance::query()
+            ->where('status', 'active')
+            ->whereBetween('expiration_date', [now(), now()->addDays(30)])
+            ->count();
+
+        $expired = Clearance::query()
+            ->where('status', 'active')
+            ->where('expiration_date', '<', now())
+            ->count();
+
+        return $this->success([
+            'year' => $year,
+            'semester' => $semester,
+            'period' => [
+                'start' => $start->toDateString(),
+                'end' => $end->toDateString(),
+                'label' => ($semester === 1 ? '1st' : '2nd').' Semester '.$year,
+            ],
+            'months' => $months,
+            'requests' => [
+                'total' => $months->sum('requests'),
+                'by_status' => $requestsByStatus,
+                'by_category' => $requestsByCategory,
+            ],
+            'inspections' => [
+                'completed' => $months->sum('inspections'),
+            ],
+            'violations' => [
+                'total' => $months->sum('violations'),
+                'by_severity' => [
+                    'minor' => (int) $violationsBySeverity->get('minor', 0),
+                    'moderate' => (int) $violationsBySeverity->get('moderate', 0),
+                    'major' => (int) $violationsBySeverity->get('major', 0),
+                ],
+                'by_status' => $violationsByStatus,
+            ],
+            'compliance' => [
+                'total_checks' => $complianceTotal,
+                'compliant' => $compliant,
+                'non_compliant' => (int) $compliance->get('non_compliant', 0),
+                'needs_correction' => (int) $compliance->get('needs_correction', 0),
+                'compliance_rate' => $complianceTotal > 0 ? round(($compliant / $complianceTotal) * 100, 1) : 0,
+            ],
+            'clearances' => [
+                'issued' => $months->sum('clearances'),
+                'by_status' => $clearancesByStatus,
+                'expiring_soon' => $expiring,
+                'expired' => $expired,
+            ],
+        ], 'State of the Barangay Address (SOBA) report retrieved successfully');
     }
+
+    private function monthlyCounts($baseQuery, string $dateColumn): \Illuminate\Support\Collection
+    {
+        $rows = $baseQuery
+            ->groupByRaw($this->monthExpression($dateColumn))
+            ->orderBy('month')
+            ->get()
+            ->keyBy('month');
+
+        return $rows->map(fn ($row) => (int) $row->total);
+    }
+
+    private function monthExpression(string $column): string
+{
+    return match (DB::connection()->getDriverName()) {
+        'pgsql' => "EXTRACT(MONTH FROM {$column})",
+        'sqlite' => "CAST(strftime('%m', {$column}) AS INTEGER)",
+        default => "MONTH({$column})", // mysql, mariadb
+    };
+}
 }

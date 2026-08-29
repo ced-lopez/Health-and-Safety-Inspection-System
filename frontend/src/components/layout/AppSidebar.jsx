@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
   AlertTriangle,
@@ -8,18 +8,25 @@ import {
   Building2,
   CalendarDays,
   CheckSquare,
+  ChevronRight,
   ChevronsUpDown,
   ClipboardCheck,
+  Drumstick,
   FileText,
   History,
   LayoutDashboard,
   LogOut,
   MapPin,
+  PawPrint,
+  PiggyBank,
   RefreshCw,
+  ScanText,
   Search,
   Settings,
+  Store,
   User,
   Users,
+  Utensils,
 } from "lucide-react";
 
 import { useAuth } from "@/context/AuthContext";
@@ -50,6 +57,9 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarMenuSub,
+  SidebarMenuSubButton,
+  SidebarMenuSubItem,
   SidebarRail,
   SidebarSeparator,
 } from "@/components/ui/sidebar";
@@ -64,13 +74,19 @@ const iconMap = {
   CalendarDays,
   CheckSquare,
   ClipboardCheck,
+  Drumstick,
   FileText,
   History,
   LayoutDashboard,
+  PawPrint,
+  PiggyBank,
   RefreshCw,
+  ScanText,
   Settings,
+  Store,
   User,
   Users,
+  Utensils,
 };
 
 // Fallback grouping used when a nav item doesn't declare its own `group`.
@@ -85,6 +101,7 @@ const DEFAULT_GROUP_MAP = {
   "/scheduling": "Operations",
   "/checklists": "Compliance",
   "/documents": "Compliance",
+  "/ocr-results": "Compliance",
   "/violations": "Compliance",
   "/certifications": "Compliance",
   "/reports": "Insights",
@@ -99,6 +116,20 @@ const GROUP_ORDER = [
   "Insights",
   "Admin",
 ];
+
+function isItemActive(item, pathname) {
+  return (
+    pathname === item.href || pathname.startsWith(`${item.href}/`)
+  );
+}
+
+function isParentActive(item, pathname) {
+  if (isItemActive(item, pathname)) {
+    return true;
+  }
+
+  return (item.children ?? []).some((child) => isItemActive(child, pathname));
+}
 
 function groupNavItems(items) {
   const groups = new Map();
@@ -126,8 +157,54 @@ export function AppSidebar({ unassignedCount } = {}) {
 
   const isResident = user?.role?.slug === "resident";
   const navItems = isResident ? RESIDENT_NAV_ITEMS : STAFF_NAV_ITEMS;
+
+  // Determine the default set of expanded parent items based on the current
+  // route so a nested menu opens when it holds the active child.
+  const [openGroups, setOpenGroups] = useState(() => {
+    const initial = new Set();
+
+    navItems.forEach((item) => {
+      if (item.children?.length && isParentActive(item, location.pathname)) {
+        initial.add(item.href);
+      }
+    });
+
+    return initial;
+  });
+
+  useEffect(() => {
+    setOpenGroups((current) => {
+      const next = new Set(current);
+      navItems.forEach((item) => {
+        if (item.children?.length) {
+          if (isParentActive(item, location.pathname)) {
+            next.add(item.href);
+          }
+        }
+      });
+
+      return next;
+    });
+  }, [location.pathname, navItems]);
+
   const visibleItems = navItems
     .filter((item) => canAccess(item.module))
+    .map((item) =>
+      item.children?.length
+        ? {
+            ...item,
+            children: (item.children ?? []).filter((child) =>
+              canAccess(child.module),
+            ),
+          }
+        : item,
+    )
+    .map((item) =>
+      // Only surface the parent item if it still has at least one accessible
+      // child when it is a group.
+      item.children?.length === 0 ? null : item,
+    )
+    .filter(Boolean)
     .map((item) =>
       // Scheduling Calendar is where approved inspections get an inspector
       // assigned, so surface how many are still waiting for assignment.
@@ -139,14 +216,50 @@ export function AppSidebar({ unassignedCount } = {}) {
 
   const filteredItems = useMemo(() => {
     if (!query.trim()) return visibleItems;
+
     const q = query.trim().toLowerCase();
-    return visibleItems.filter((item) => item.title.toLowerCase().includes(q));
+    const matches = (entry) =>
+      entry.title.toLowerCase().includes(q) ||
+      entry.keywords?.some((keyword) => keyword.toLowerCase().includes(q));
+
+    return visibleItems
+      .map((item) => {
+        if (matches(item)) {
+          return { ...item, children: item.children ?? [] };
+        }
+
+        if (item.children?.length) {
+          const matchingChildren = item.children.filter(matches);
+
+          if (matchingChildren.length > 0) {
+            return { ...item, children: matchingChildren };
+          }
+        }
+
+        return null;
+      })
+      .filter(Boolean);
   }, [visibleItems, query]);
+
+  const isSearching = query.trim().length > 0;
 
   const groupedItems = useMemo(
     () => groupNavItems(filteredItems),
     [filteredItems],
   );
+
+  function toggleGroup(href) {
+    setOpenGroups((current) => {
+      const next = new Set(current);
+      if (next.has(href)) {
+        next.delete(href);
+      } else {
+        next.add(href);
+      }
+
+      return next;
+    });
+  }
 
   const initials = (user?.name ?? "User")
     .split(" ")
@@ -157,8 +270,9 @@ export function AppSidebar({ unassignedCount } = {}) {
 
   async function handleLogout() {
     try {
+      const portal = user?.role?.slug === "resident" ? "/" : "/admin/login";
       await logout();
-      navigate(user?.role?.slug === "resident" ? "/login" : "/admin/login", {
+      navigate(portal, {
         replace: true,
       });
     } catch {
@@ -178,11 +292,9 @@ export function AppSidebar({ unassignedCount } = {}) {
             />
           </div>
           <div className="min-w-0 group-data-[collapsible=icon]:hidden">
-            {/* Single line keeps header height locked to the navbar's h-16;
-                full name still available via title tooltip on hover */}
             <p
               title={APP_NAME}
-              className="truncate font-display text-sm font-bold leading-tight text-sidebar-foreground"
+              className="font-display text-sm font-bold leading-tight text-sidebar-foreground"
             >
               {APP_NAME}
             </p>
@@ -220,38 +332,101 @@ export function AppSidebar({ unassignedCount } = {}) {
               <SidebarMenu className="gap-1">
                 {group.items.map((item) => {
                   const Icon = iconMap[item.icon];
-                  const isActive =
-                    location.pathname === item.href ||
-                    location.pathname.startsWith(`${item.href}/`);
+                  const children = item.children ?? [];
+                  const hasChildren = children.length > 0;
+                  const isActive = isParentActive(item, location.pathname);
+                  const isOpen =
+                    hasChildren &&
+                    (openGroups.has(item.href) || (isSearching && children.length > 0));
 
                   return (
                     <SidebarMenuItem key={item.href}>
-                      <SidebarMenuButton
-                        render={<Link to={item.href} />}
-                        isActive={isActive}
-                        tooltip={item.title}
-                        className={cn(
-                          "relative h-10 rounded-lg px-3 text-sidebar-foreground/75 transition-colors",
-                          "hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
-                          "data-active:bg-sidebar-primary data-active:text-sidebar-primary-foreground data-active:shadow-sm",
-                          // Left accent bar on the active item, in addition to the fill
-                          "data-active:before:absolute data-active:before:left-0 data-active:before:top-1/2 data-active:before:h-5 data-active:before:w-1 data-active:before:-translate-y-1/2 data-active:before:rounded-full data-active:before:bg-sidebar-primary-foreground/70 data-active:before:content-['']",
-                          "group-data-[collapsible=icon]:size-9 group-data-[collapsible=icon]:justify-center",
-                        )}
-                      >
-                        <Icon className="size-4 shrink-0" />
-                        <span className="flex-1 truncate font-medium">
-                          {item.title}
-                        </span>
-                        {typeof item.badge === "number" && item.badge > 0 && (
-                          <Badge
-                            variant="secondary"
-                            className="ml-auto h-5 min-w-5 shrink-0 justify-center rounded-full px-1.5 text-[0.68rem] group-data-[collapsible=icon]:hidden"
+                      {hasChildren ? (
+                        <>
+                          <SidebarMenuButton
+                            render={
+                              <button
+                                type="button"
+                                onClick={() => toggleGroup(item.href)}
+                              />
+                            }
+                            isActive={isActive}
+                            tooltip={item.title}
+                            className={cn(
+                              "relative h-10 rounded-lg px-3 text-sidebar-foreground/75 transition-colors",
+                              "hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+                              "data-active:bg-sidebar-primary data-active:text-sidebar-primary-foreground data-active:shadow-sm",
+                              "data-active:before:absolute data-active:before:left-0 data-active:before:top-1/2 data-active:before:h-5 data-active:before:w-1 data-active:before:-translate-y-1/2 data-active:before:rounded-full data-active:before:bg-sidebar-primary-foreground/70 data-active:before:content-['']",
+                              "group-data-[collapsible=icon]:size-9 group-data-[collapsible=icon]:justify-center",
+                            )}
                           >
-                            {item.badge > 99 ? "99+" : item.badge}
-                          </Badge>
-                        )}
-                      </SidebarMenuButton>
+                            <Icon className="size-4 shrink-0" />
+                            <span className="flex-1 truncate font-medium">
+                              {item.title}
+                            </span>
+                            <ChevronRight
+                              className={cn(
+                                "size-4 shrink-0 text-sidebar-foreground/40 transition-transform duration-200",
+                                isOpen && "rotate-90",
+                              )}
+                            />
+                          </SidebarMenuButton>
+                          {isOpen && (
+                            <SidebarMenuSub className="mt-1">
+                              {children.map((child) => {
+                                const ChildIcon = iconMap[child.icon];
+                                const childActive = isItemActive(
+                                  child,
+                                  location.pathname,
+                                );
+
+                                return (
+                                  <SidebarMenuSubItem key={child.href}>
+                                    <SidebarMenuSubButton
+                                      render={<Link to={child.href} />}
+                                      isActive={childActive}
+                                      size="sm"
+                                      className="gap-2.5"
+                                    >
+                                      <ChildIcon className="size-3.5 shrink-0" />
+                                      <span className="truncate">
+                                        {child.title}
+                                      </span>
+                                    </SidebarMenuSubButton>
+                                  </SidebarMenuSubItem>
+                                );
+                              })}
+                            </SidebarMenuSub>
+                          )}
+                        </>
+                      ) : (
+                        <SidebarMenuButton
+                          render={<Link to={item.href} />}
+                          isActive={isActive}
+                          tooltip={item.title}
+                          className={cn(
+                            "relative h-10 rounded-lg px-3 text-sidebar-foreground/75 transition-colors",
+                            "hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+                            "data-active:bg-sidebar-primary data-active:text-sidebar-primary-foreground data-active:shadow-sm",
+                            // Left accent bar on the active item, in addition to the fill
+                            "data-active:before:absolute data-active:before:left-0 data-active:before:top-1/2 data-active:before:h-5 data-active:before:w-1 data-active:before:-translate-y-1/2 data-active:before:rounded-full data-active:before:bg-sidebar-primary-foreground/70 data-active:before:content-['']",
+                            "group-data-[collapsible=icon]:size-9 group-data-[collapsible=icon]:justify-center",
+                          )}
+                        >
+                          <Icon className="size-4 shrink-0" />
+                          <span className="flex-1 truncate font-medium">
+                            {item.title}
+                          </span>
+                          {typeof item.badge === "number" && item.badge > 0 && (
+                            <Badge
+                              variant="secondary"
+                              className="ml-auto h-5 min-w-5 shrink-0 justify-center rounded-full px-1.5 text-[0.68rem] group-data-[collapsible=icon]:hidden"
+                            >
+                              {item.badge > 99 ? "99+" : item.badge}
+                            </Badge>
+                          )}
+                        </SidebarMenuButton>
+                      )}
                     </SidebarMenuItem>
                   );
                 })}

@@ -13,12 +13,15 @@ import UsersPage from "@/pages/users/UsersPage";
 import DashboardPage from "@/pages/dashboard/DashboardPage";
 import InspectorDashboardPage from "@/pages/inspector/InspectorDashboardPage";
 import EstablishmentsPage from "@/pages/establishments/EstablishmentsPage";
+import EstablishmentProfilePage from "@/pages/establishments/EstablishmentProfilePage";
 import InspectionsPage from "@/pages/inspections/InspectionsPage";
 import ViolationsPage from "@/pages/violations/ViolationsPage";
 import InspectionRequestsPage from "@/pages/inspection-requests/InspectionRequestsPage";
 import CalendarPage from "@/pages/scheduling/CalendarPage";
 import ChecklistsPage from "@/pages/checklists/ChecklistsPage";
 import DocumentsPage from "@/pages/documents/DocumentsPage";
+import OcrResultsPage from "@/pages/ocr-results/OcrResultsPage";
+import OcrResultDetailPage from "@/pages/ocr-results/OcrResultDetailPage";
 import ReportsPage from "@/pages/reports/ReportsPage";
 import AuditLogsPage from "@/pages/audit-logs/AuditLogsPage";
 import ResidentDashboardPage from "@/pages/resident/DashboardPage";
@@ -97,6 +100,8 @@ export function AppRoutes() {
       >
         <Route path="dashboard" element={<ProtectedRoute module="dashboard"><RoleAwareDashboard /></ProtectedRoute>} />
         <Route path="establishments" element={<ProtectedRoute module="establishments"><EstablishmentsPage /></ProtectedRoute>} />
+        <Route path="establishments/category/:category" element={<ProtectedRoute module="establishments"><EstablishmentsPage /></ProtectedRoute>} />
+        <Route path="establishments/:id" element={<ProtectedRoute module="establishments"><EstablishmentProfilePage /></ProtectedRoute>} />
         <Route path="inspections" element={<ProtectedRoute module="inspections"><InspectionsPage /></ProtectedRoute>} />
         <Route path="scheduling" element={<ProtectedRoute module="scheduling"><CalendarPage /></ProtectedRoute>} />
         <Route path="violations" element={<ProtectedRoute module="violations"><ViolationsPage /></ProtectedRoute>} />
@@ -106,6 +111,8 @@ export function AppRoutes() {
         <Route path="inspection-requests" element={<ProtectedRoute module="inspection-requests"><InspectionRequestsPage /></ProtectedRoute>} />
         <Route path="checklists" element={<ProtectedRoute module="checklists"><ChecklistsPage /></ProtectedRoute>} />
         <Route path="documents" element={<ProtectedRoute module="documents"><DocumentsPage /></ProtectedRoute>} />
+        <Route path="ocr-results" element={<ProtectedRoute module="ocr-results"><OcrResultsPage /></ProtectedRoute>} />
+        <Route path="ocr-results/:id" element={<ProtectedRoute module="ocr-results"><OcrResultDetailPage /></ProtectedRoute>} />
         <Route path="reports" element={<ProtectedRoute module="reports"><ReportsPage /></ProtectedRoute>} />
         <Route path="audit-logs" element={<ProtectedRoute module="audit-logs"><AuditLogsPage /></ProtectedRoute>} />
 

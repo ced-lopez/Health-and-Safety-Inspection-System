@@ -109,7 +109,7 @@ export default function CalendarPage() {
   const [editForm, setEditForm] = useState({ id: null, date: '', time: '', inspector_id: '' })
 
   const optionsQuery = useQuery({
-    queryKey: ['inspection-options'],
+    queryKey: ['calendar-options'],
     queryFn: () => fetchInspectionOptions().then((body) => body.data),
   })
 

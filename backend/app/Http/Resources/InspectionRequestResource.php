@@ -22,6 +22,7 @@ class InspectionRequestResource extends JsonResource
             'sub_path' => $this->sub_path,
             'declared_animal_count' => $this->declared_animal_count,
             'status' => $this->status,
+            'preferred_schedule_at' => $this->preferred_schedule_at?->toIso8601String(),
             'documents_count' => $this->whenHas('documents_count'),
             'submitted_at' => $this->submitted_at?->toIso8601String(),
             'reviewed_at' => $this->reviewed_at?->toIso8601String(),
@@ -34,6 +35,7 @@ class InspectionRequestResource extends JsonResource
             'reviewed_by' => new UserResource($this->whenLoaded('reviewedBy')),
             'documents' => DocumentResource::collection($this->whenLoaded('documents')),
             'inspection_assignment' => new InspectionAssignmentResource($this->whenLoaded('inspectionAssignment')),
+            'schedules' => InspectionScheduleResource::collection($this->whenLoaded('schedules')),
         ];
     }
 }

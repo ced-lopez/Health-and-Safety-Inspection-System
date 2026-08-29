@@ -15,6 +15,7 @@ class Establishment extends Model
     protected $fillable = [
         'name',
         'business_type',
+        'category',
         'owner_name',
         'address',
         'barangay',
@@ -51,9 +52,19 @@ class Establishment extends Model
         return $this->hasMany(Inspection::class);
     }
 
+    public function inspectionRequests(): HasMany
+    {
+        return $this->hasMany(InspectionRequest::class);
+    }
+
     public function violations(): HasMany
     {
         return $this->hasMany(Violation::class);
+    }
+
+    public function openViolations(): HasMany
+    {
+        return $this->hasMany(Violation::class)->where('status', '!=', 'resolved');
     }
 
     public function certifications(): HasMany

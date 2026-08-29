@@ -95,7 +95,7 @@ class DashboardController extends BaseApiController
                 'total' => (int) ($monthlyInspections->get($m)?->total ?? 0),
                 'completed' => (int) ($monthlyInspections->get($m)?->completed ?? 0),
                 'clearances' => (int) ($monthlyClearances->get($m)?->issued ?? 0),
-            ]);
+            ])->toArray();
 
             $pendingRequests = InspectionRequest::query()
                 ->whereIn('status', ['submitted', 'under_review'])
@@ -110,7 +110,9 @@ class DashboardController extends BaseApiController
                     'business_name' => $request->business_name,
                     'category' => $request->inspectionCategory?->name ?? 'Inspection',
                     'submitted_at' => $request->submitted_at?->format('M d, Y') ?? 'N/A',
-                ]);
+                ])
+                ->values()
+                ->toArray();
 
             $assignedInspectors = InspectionAssignment::query()
                 ->whereIn('status', ['assigned', 'downloaded', 'in_progress'])
@@ -127,7 +129,9 @@ class DashboardController extends BaseApiController
                     'category' => $assignment->inspectionRequest?->inspectionCategory?->name ?? 'Inspection',
                     'status' => ucfirst(str_replace('_', ' ', $assignment->status)),
                     'assigned_at' => $assignment->assigned_at?->format('M d, Y') ?? 'N/A',
-                ]);
+                ])
+                ->values()
+                ->toArray();
 
             $completedInspections = Inspection::query()
                 ->where('status', 'completed')
@@ -141,7 +145,9 @@ class DashboardController extends BaseApiController
                     'establishment_name' => $inspection->establishment?->name ?? 'Unknown',
                     'inspector_name' => $inspection->inspector?->name ?? 'Unassigned',
                     'date' => $inspection->inspection_date?->format('M d, Y') ?? 'N/A',
-                ]);
+                ])
+                ->values()
+                ->toArray();
 
             $activeViolations = Violation::query()
                 ->whereIn('status', ['open', 'under_review'])
@@ -156,7 +162,9 @@ class DashboardController extends BaseApiController
                     'status' => $violation->status,
                     'establishment_name' => $violation->establishment?->name ?? 'Unknown',
                     'correction_deadline' => $violation->correction_deadline?->format('M d, Y'),
-                ]);
+                ])
+                ->values()
+                ->toArray();
 
             $expiringClearances = Clearance::query()
                 ->where('status', 'active')
@@ -174,7 +182,9 @@ class DashboardController extends BaseApiController
                     'days_left' => $clearance->expiration_date
                         ? $clearance->expiration_date->diffInDays(Carbon::today())
                         : null,
-                ]);
+                ])
+                ->values()
+                ->toArray();
 
             $recentActivities = AuditLog::query()
                 ->with('user')
@@ -189,7 +199,53 @@ class DashboardController extends BaseApiController
                     'description' => $log->description,
                     'user_name' => $log->user?->name ?? 'System',
                     'created_at' => $log->created_at?->toIso8601String(),
-                ]);
+                ])
+                ->values()
+                ->toArray();
+
+            // System-wide all-time totals
+            $systemTotals = [
+                'total_users' => User::query()->count(),
+                'total_establishments' => Establishment::query()->count(),
+                'total_requests' => InspectionRequest::query()->count(),
+                'total_inspections' => Inspection::query()->count(),
+                'total_violations' => Violation::query()->count(),
+                'total_clearances' => Clearance::query()->count(),
+            ];
+
+            $recentUsers = User::query()
+                ->with('role')
+                ->orderByDesc('created_at')
+                ->limit(5)
+                ->get()
+                ->map(fn ($u) => [
+                    'id' => $u->id,
+                    'name' => $u->name,
+                    'email' => $u->email,
+                    'role' => $u->role?->name ?? $u->role?->slug ?? '—',
+                    'role_slug' => $u->role?->slug ?? null,
+                    'created_at' => $u->created_at?->toIso8601String(),
+                    'is_active' => (bool) $u->is_active,
+                ])
+                ->values()
+                ->toArray();
+
+            $requestsByCategory = InspectionRequest::query()
+                ->join('inspection_categories', 'inspection_categories.id', '=', 'inspection_requests.inspection_category_id')
+                ->selectRaw('inspection_categories.name as category, inspection_categories.slug as slug, COUNT(*) as total')
+                ->groupBy('inspection_categories.name', 'inspection_categories.slug')
+                ->orderByDesc('total')
+                ->get()
+                ->map(fn ($row) => ['category' => $row->category, 'slug' => $row->slug, 'total' => (int) $row->total])
+                ->toArray();
+
+            $establishmentsByCategory = Establishment::query()
+                ->selectRaw('COALESCE(NULLIF(category, \'\'), business_type, \'Uncategorized\') as category, COUNT(*) as total')
+                ->groupByRaw('COALESCE(NULLIF(category, \'\'), business_type, \'Uncategorized\')')
+                ->orderByDesc('total')
+                ->get()
+                ->map(fn ($row) => ['category' => $row->category, 'total' => (int) $row->total])
+                ->toArray();
 
             return [
                 'stats' => [
@@ -200,6 +256,10 @@ class DashboardController extends BaseApiController
                     'expiring_clearances' => $expiringClearancesCount,
                     'active_establishments' => $activeEstablishmentsCount,
                 ],
+                'system_totals' => $systemTotals,
+                'recent_users' => $recentUsers,
+                'requests_by_category' => $requestsByCategory,
+                'establishments_by_category' => $establishmentsByCategory,
                 'pending_requests' => $pendingRequests,
                 'assigned_inspectors' => $assignedInspectors,
                 'completed_inspections' => $completedInspections,
@@ -211,13 +271,13 @@ class DashboardController extends BaseApiController
                     'monthly' => $monthlySeries,
                     'violations' => [
                         'by_severity' => [
-                            'minor' => (int) ($violationSeverity->get('minor', 0)),
-                            'moderate' => (int) ($violationSeverity->get('moderate', 0)),
-                            'major' => (int) ($violationSeverity->get('major', 0)),
+                            'minor' => (int) ($violationSeverity['minor'] ?? 0),
+                            'moderate' => (int) ($violationSeverity['moderate'] ?? 0),
+                            'major' => (int) ($violationSeverity['major'] ?? 0),
                         ],
                         'by_status' => [
-                            'open' => (int) ($violationStatus->get('open', 0)),
-                            'resolved' => (int) ($violationStatus->get('resolved', 0)),
+                            'open' => (int) ($violationStatus['open'] ?? 0),
+                            'resolved' => (int) ($violationStatus['resolved'] ?? 0),
                         ],
                     ],
                 ],
@@ -227,12 +287,14 @@ class DashboardController extends BaseApiController
         return $this->success($data, 'Dashboard data retrieved successfully');
     }
 
-    private function monthExpression(string $column): string
-    {
-        return DB::connection()->getDriverName() === 'pgsql'
-            ? "EXTRACT(MONTH FROM {$column})"
-            : "CAST(strftime('%m', {$column}) AS INTEGER)";
-    }
+  private function monthExpression(string $column): string
+{
+    return match (DB::connection()->getDriverName()) {
+        'pgsql' => "EXTRACT(MONTH FROM {$column})",
+        'sqlite' => "CAST(strftime('%m', {$column}) AS INTEGER)",
+        default => "MONTH({$column})", // mysql, mariadb
+    };
+}
 
     private function moduleFromEvent(?string $event): string
     {

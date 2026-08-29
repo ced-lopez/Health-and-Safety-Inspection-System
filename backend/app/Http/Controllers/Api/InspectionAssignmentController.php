@@ -56,8 +56,10 @@ class InspectionAssignmentController extends BaseApiController
         ], 'Assignments retrieved successfully');
     }
 
-    public function show(InspectionAssignment $inspectionAssignment): JsonResponse
+    public function show(Request $request, InspectionAssignment $inspectionAssignment): JsonResponse
     {
+        $this->authorizeAssignment($request, $inspectionAssignment);
+
         $inspectionAssignment->load([
             'inspectionRequest.resident.role',
             'inspectionRequest.inspectionCategory',
@@ -75,8 +77,10 @@ class InspectionAssignmentController extends BaseApiController
         );
     }
 
-    public function start(InspectionAssignment $inspectionAssignment): JsonResponse
+    public function start(Request $request, InspectionAssignment $inspectionAssignment): JsonResponse
     {
+        $this->authorizeAssignment($request, $inspectionAssignment);
+
         if ($inspectionAssignment->status !== 'assigned' && $inspectionAssignment->status !== 'downloaded') {
             return $this->error('Assignment cannot be started in its current state', 422);
         }
@@ -106,6 +110,8 @@ class InspectionAssignmentController extends BaseApiController
 
     public function submit(Request $request, InspectionAssignment $inspectionAssignment): JsonResponse
     {
+        $this->authorizeAssignment($request, $inspectionAssignment);
+
         if ($inspectionAssignment->status !== 'in_progress') {
             return $this->error('Only in-progress inspections can be submitted', 422);
         }
@@ -121,11 +127,17 @@ class InspectionAssignmentController extends BaseApiController
             'notes' => $validated['notes'] ?? $inspectionAssignment->notes,
         ]);
 
-        $inspectionAssignment->inspectionRequest->update([
-            'status' => 'inspection_completed',
+        $inspection = $this->inspectionFor($inspectionAssignment);
+        $inspection->update([
+            'status' => 'completed',
+            'completed_at' => now(),
         ]);
 
         $inspectionRequest = $inspectionAssignment->inspectionRequest;
+
+        $inspectionRequest->update([
+            'status' => 'inspection_completed',
+        ]);
 
         $inspectionRequest->resident?->notify(new InspectionCompleted(
             $inspectionRequest->request_number,
@@ -163,11 +175,12 @@ class InspectionAssignmentController extends BaseApiController
 
         $inspection = $this->inspectionFor($inspectionAssignment);
 
-        $checklists = Checklist::query()
-            ->where('is_active', true)
-            ->with('items')
-            ->orderBy('category')
-            ->get();
+        $inspectionRequest = $inspectionAssignment->inspectionRequest;
+
+        $category = $inspectionRequest?->establishment?->category
+            ?? Checklist::categoryForInspectionCategory($inspectionRequest?->inspectionCategory?->slug);
+
+        $checklists = Checklist::forEstablishmentCategory($category)->get();
 
         $results = InspectionResult::query()
             ->where('inspection_id', $inspection->id)

@@ -43,7 +43,10 @@ return new class extends Migration
             $table->softDeletes();
 
             $table->index(['resident_id', 'status']);
-            $table->index(['inspection_category_id', 'application_type_id']);
+            $table->index(
+    ['inspection_category_id', 'application_type_id'],
+    'inspection_requests_category_type_index'
+);
             $table->index(['status', 'submitted_at']);
         });
     }

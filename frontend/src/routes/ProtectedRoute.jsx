@@ -16,9 +16,10 @@ export function ProtectedRoute({ children, module }) {
   }
 
   if (!isAuthenticated) {
+    const residentPath = location.pathname.startsWith("/resident");
     return (
       <Navigate
-        to={user?.role?.slug === 'resident' ? '/login' : '/admin/login'}
+        to={residentPath ? "/" : "/admin/login"}
         replace
         state={{ from: location }}
       />

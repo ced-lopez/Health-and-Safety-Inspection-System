@@ -10,6 +10,11 @@ export async function fetchEstablishment(id) {
   return data
 }
 
+export async function fetchEstablishmentProfile(id) {
+  const { data } = await api.get(`/v1/establishments/${id}`)
+  return data
+}
+
 export async function createEstablishment(payload) {
   const { data } = await api.post('/v1/establishments', payload)
   return data

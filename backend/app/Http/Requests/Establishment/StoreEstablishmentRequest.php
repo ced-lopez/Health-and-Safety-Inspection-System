@@ -15,7 +15,8 @@ class StoreEstablishmentRequest extends FormRequest
     {
         return [
             'name' => ['required', 'string', 'max:255'],
-            'business_type' => ['required', 'string', 'max:255'],
+            'business_type' => ['nullable', 'string', 'max:255'],
+            'category' => ['nullable', 'string', 'in:food_establishment,piggery,poultry,dog_raising_kennel'],
             'owner_name' => ['required', 'string', 'max:255'],
             'address' => ['required', 'string'],
             'contact_number' => ['nullable', 'string', 'max:20'],

@@ -4,7 +4,6 @@ import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { toast } from 'sonner'
 
 import { useAuth } from '@/context/AuthContext'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -12,13 +11,14 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { CHECKLIST_CATEGORY_LABELS } from '@/utils/constants'
 import api from '@/services/api'
 
 const CATEGORIES = [
   { value: 'food_establishment', label: 'Food Establishment' },
   { value: 'piggery', label: 'Piggery' },
   { value: 'poultry', label: 'Poultry' },
-  { value: 'dog_raising', label: 'Dog Raising / Kennel' },
+  { value: 'dog_raising_kennel', label: 'Dog Raising / Kennel' },
 ]
 
 export default function ChecklistsPage() {
@@ -161,7 +161,7 @@ export default function ChecklistsPage() {
                 {filtered.map((cl) => (
                   <TableRow key={cl.id}>
                     <TableCell className="font-medium">{cl.name}</TableCell>
-                    <TableCell className="capitalize">{cl.category?.replace(/_/g, ' ')}</TableCell>
+                    <TableCell>{CHECKLIST_CATEGORY_LABELS[cl.category] ?? cl.category?.replace(/_/g, ' ')}</TableCell>
                     <TableCell>{cl.items_count ?? cl.items?.length ?? 0}</TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-2">

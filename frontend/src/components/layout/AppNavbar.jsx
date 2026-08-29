@@ -173,9 +173,10 @@ export function AppNavbar() {
 
   async function handleLogout() {
     try {
+      const portal = user?.role?.slug === "resident" ? "/" : "/admin/login";
       await logout();
       toast.success("Signed out successfully");
-      navigate(user?.role?.slug === "resident" ? "/login" : "/admin/login", {
+      navigate(portal, {
         replace: true,
       });
     } catch {

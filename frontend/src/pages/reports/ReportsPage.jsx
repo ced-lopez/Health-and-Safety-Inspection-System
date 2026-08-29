@@ -29,6 +29,7 @@ import {
   fetchViolationReports,
   fetchClearanceReports,
   fetchDashboardReport,
+  fetchSobaReports,
 } from '@/services/reportService'
 
 const MONTH_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
@@ -56,6 +57,13 @@ const violationStatusConfig = {
 const overviewChartConfig = {
   inspections: { label: 'Inspections', color: 'var(--color-chart-1)' },
   clearances: { label: 'Clearances', color: 'var(--color-chart-3)' },
+}
+
+const sobaMonthlyConfig = {
+  requests: { label: 'Requests', color: 'var(--color-chart-1)' },
+  inspections: { label: 'Inspections', color: 'var(--color-chart-2)' },
+  clearances: { label: 'Clearances', color: 'var(--color-chart-3)' },
+  violations: { label: 'Violations', color: 'var(--color-chart-4)' },
 }
 
 const SEVERITY_COLORS = ['var(--color-chart-1)', 'var(--color-chart-2)', 'var(--color-chart-4)']
@@ -90,6 +98,8 @@ export default function ReportsPage() {
   const [insParams] = useState({})
   const [violParams] = useState({})
   const [clearParams] = useState({})
+  const [sobaYear, setSobaYear] = useState(new Date().getFullYear())
+  const [sobaSemester, setSobaSemester] = useState('1')
 
   const { data: insData, isLoading: insLoading } = useQuery({
     queryKey: ['report-inspections', insParams],
@@ -111,6 +121,11 @@ export default function ReportsPage() {
     queryFn: () => fetchDashboardReport(),
   })
 
+  const { data: sobaData, isLoading: sobaLoading } = useQuery({
+    queryKey: ['report-soba', sobaYear, sobaSemester],
+    queryFn: () => fetchSobaReports(sobaYear, sobaSemester),
+  })
+
   function handleDownloadCSV(reportType) {
     toast.info(`${reportType} CSV export coming soon`)
   }
@@ -119,6 +134,7 @@ export default function ReportsPage() {
   const violStats = violData?.data ?? {}
   const clearStats = clearData?.data ?? {}
   const dashStats = dashData?.data ?? {}
+  const sobaStats = sobaData?.data ?? {}
 
   const insMonthly = insStats.monthly ?? []
   const clearMonthly = clearStats.monthly ?? []
@@ -135,6 +151,14 @@ export default function ReportsPage() {
     { rows: clearMonthly, field: 'clearances', key: 'issued' },
   )
 
+  const sobaMonthly = sobaStats.months ?? []
+  const sobaSeries = buildMonthlySeries(
+    { rows: sobaMonthly, field: 'requests', key: 'requests' },
+    { rows: sobaMonthly, field: 'inspections', key: 'inspections' },
+    { rows: sobaMonthly, field: 'clearances', key: 'clearances' },
+    { rows: sobaMonthly, field: 'violations', key: 'violations' },
+  )
+
   const severityData = [
     { key: 'minor', label: 'Minor', value: violStats.by_severity?.minor ?? 0 },
     { key: 'moderate', label: 'Moderate', value: violStats.by_severity?.moderate ?? 0 },
@@ -144,6 +168,24 @@ export default function ReportsPage() {
   const statusData = [
     { key: 'open', label: 'Open', value: violStats.by_status?.open ?? 0 },
     { key: 'resolved', label: 'Resolved', value: violStats.by_status?.resolved ?? 0 },
+  ]
+
+  const sobaCategoryData = (sobaStats.requests?.by_category ?? []).map((row) => ({
+    key: row.category,
+    label: row.category,
+    value: row.total,
+  }))
+
+  const sobaViolationSeverityData = [
+    { key: 'minor', label: 'Minor', value: sobaStats.violations?.by_severity?.minor ?? 0 },
+    { key: 'moderate', label: 'Moderate', value: sobaStats.violations?.by_severity?.moderate ?? 0 },
+    { key: 'major', label: 'Major', value: sobaStats.violations?.by_severity?.major ?? 0 },
+  ]
+
+  const sobaComplianceData = [
+    { key: 'compliant', label: 'Compliant', value: sobaStats.compliance?.compliant ?? 0 },
+    { key: 'non_compliant', label: 'Non-Compliant', value: sobaStats.compliance?.non_compliant ?? 0 },
+    { key: 'needs_correction', label: 'Needs Correction', value: sobaStats.compliance?.needs_correction ?? 0 },
   ]
 
   const hasAnyData = (arr) => arr.some((row) => Object.values(row).some((v) => typeof v === 'number' && v > 0))
@@ -161,6 +203,7 @@ export default function ReportsPage() {
           <TabsTrigger value="inspections">Inspections</TabsTrigger>
           <TabsTrigger value="violations">Violations</TabsTrigger>
           <TabsTrigger value="clearances">Clearances</TabsTrigger>
+          <TabsTrigger value="soba">SOBA</TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview" className="space-y-4 pt-4">
@@ -340,6 +383,142 @@ export default function ReportsPage() {
                   )}
                 </CardContent>
               </Card>
+            </>
+          )}
+        </TabsContent>
+      <TabsContent value="soba" className="space-y-4 pt-4">
+          <div className="flex flex-wrap items-center gap-3">
+            <select
+              value={sobaYear}
+              onChange={(e) => setSobaYear(Number(e.target.value))}
+              className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+            >
+              {Array.from({ length: 5 }, (_, i) => {
+                const y = new Date().getFullYear() - 2 + i
+                return <option key={y} value={y}>{y}</option>
+              })}
+            </select>
+            <select
+              value={sobaSemester}
+              onChange={(e) => setSobaSemester(e.target.value)}
+              className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+            >
+              <option value="1">1st Semester (Jan–Jun)</option>
+              <option value="2">2nd Semester (Jul–Dec)</option>
+            </select>
+            <span className="text-sm text-muted-foreground">{sobaStats.period?.label ?? 'Loading…'}</span>
+          </div>
+
+          {sobaLoading ? <Skeleton className="h-40 w-full" /> : (
+            <>
+              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                <StatCard title="Applications" value={sobaStats.requests?.total ?? 0} description="Inspection requests filed" />
+                <StatCard title="Inspections Completed" value={sobaStats.inspections?.completed ?? 0} />
+                <StatCard title="Clearances Issued" value={sobaStats.clearances?.issued ?? 0} />
+                <StatCard title="Compliance Rate" value={sobaStats.compliance?.compliance_rate != null ? `${sobaStats.compliance.compliance_rate}%` : '0%'} description="Across checklist checks" />
+              </div>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Monthly Activity</CardTitle>
+                  <CardDescription>Applications, inspections, clearances and violations by month</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {hasAnyData(sobaSeries) ? (
+                    <ChartContainer config={sobaMonthlyConfig} className="h-72 w-full">
+                      <BarChart data={sobaSeries}>
+                        <CartesianGrid vertical={false} />
+                        <XAxis dataKey="month" tickLine={false} axisLine={false} tickMargin={8} />
+                        <YAxis tickLine={false} axisLine={false} width={36} allowDecimals={false} />
+                        <ChartTooltip cursor={false} content={<ChartTooltipContent indicator="line" />} />
+                        <ChartLegend content={<ChartLegendContent />} />
+                        <Bar dataKey="requests" fill="var(--color-requests)" radius={4} />
+                        <Bar dataKey="inspections" fill="var(--color-inspections)" radius={4} />
+                        <Bar dataKey="clearances" fill="var(--color-clearances)" radius={4} />
+                        <Bar dataKey="violations" fill="var(--color-violations)" radius={4} />
+                      </BarChart>
+                    </ChartContainer>
+                  ) : (
+                    <p className="text-sm text-muted-foreground text-center py-4">No data yet.</p>
+                  )}
+                </CardContent>
+              </Card>
+
+              <div className="grid gap-4 lg:grid-cols-3">
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Applications by Category</CardTitle>
+                    <CardDescription>Business category distribution</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    {sobaCategoryData.length ? (
+                      <ChartContainer config={sobaMonthlyConfig} className="h-64 w-full">
+                        <BarChart data={sobaCategoryData} layout="vertical" margin={{ left: 8 }}>
+                          <CartesianGrid horizontal={false} />
+                          <XAxis type="number" tickLine={false} axisLine={false} allowDecimals={false} />
+                          <YAxis type="category" dataKey="label" tickLine={false} axisLine={false} width={120} />
+                          <ChartTooltip cursor={false} content={<ChartTooltipContent hideLabel />} />
+                          <Bar dataKey="value" radius={4}>
+                            {sobaCategoryData.map((entry, i) => (
+                              <Cell key={entry.key} fill={SEVERITY_COLORS[i % SEVERITY_COLORS.length]} />
+                            ))}
+                          </Bar>
+                        </BarChart>
+                      </ChartContainer>
+                    ) : (
+                      <p className="text-sm text-muted-foreground text-center py-4">No data yet.</p>
+                    )}
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Violations by Severity</CardTitle>
+                    <CardDescription>Semester-wide violation breakdown</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    {sobaStats.violations?.total ? (
+                      <ChartContainer config={violationSeverityConfig} className="mx-auto aspect-square h-64">
+                        <PieChart>
+                          <ChartTooltip content={<ChartTooltipContent hideLabel />} />
+                          <Pie data={sobaViolationSeverityData} dataKey="value" nameKey="label" innerRadius={60} strokeWidth={2}>
+                            {sobaViolationSeverityData.map((entry, i) => (
+                              <Cell key={entry.key} fill={SEVERITY_COLORS[i % SEVERITY_COLORS.length]} />
+                            ))}
+                          </Pie>
+                          <ChartLegend content={<ChartLegendContent nameKey="label" />} />
+                        </PieChart>
+                      </ChartContainer>
+                    ) : (
+                      <p className="text-sm text-muted-foreground text-center py-4">No data yet.</p>
+                    )}
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Compliance Breakdown</CardTitle>
+                    <CardDescription>Checklist results from inspections</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    {sobaStats.compliance?.total_checks ? (
+                      <ChartContainer config={violationStatusConfig} className="h-64 w-full">
+                        <BarChart data={sobaComplianceData}>
+                          <CartesianGrid vertical={false} />
+                          <XAxis dataKey="label" tickLine={false} axisLine={false} tickMargin={8} />
+                          <YAxis tickLine={false} axisLine={false} width={36} allowDecimals={false} />
+                          <ChartTooltip cursor={false} content={<ChartTooltipContent indicator="line" />} />
+                          <Bar dataKey="value" radius={4}>
+                            {sobaComplianceData.map((entry, i) => (
+                              <Cell key={entry.key} fill={STATUS_COLORS[i % STATUS_COLORS.length]} />
+                            ))}
+                          </Bar>
+                        </BarChart>
+                      </ChartContainer>
+                    ) : (
+                      <p className="text-sm text-muted-foreground text-center py-4">No data yet.</p>
+                    )}
+                  </CardContent>
+                </Card>
+              </div>
             </>
           )}
         </TabsContent>

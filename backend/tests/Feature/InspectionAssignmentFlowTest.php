@@ -84,6 +84,99 @@ class InspectionAssignmentFlowTest extends TestCase
         ]);
     }
 
+    public function test_inspector_can_start_assignment(): void
+    {
+        $assignment = $this->makeAssignment($this->makeWizardRequest());
+
+        $response = $this->actingAs($this->inspector, 'sanctum')
+            ->putJson("/api/v1/inspection-assignments/{$assignment->id}/start");
+
+        $response->assertStatus(200)
+            ->assertJsonPath('data.status', 'in_progress');
+
+        $this->assertDatabaseHas('inspection_assignments', [
+            'id' => $assignment->id,
+            'status' => 'in_progress',
+        ]);
+    }
+
+    public function test_other_inspector_cannot_start_assignment(): void
+    {
+        $other = $this->makeUser('inspector', 'assignotherstart@example.com');
+        $assignment = $this->makeAssignment($this->makeWizardRequest());
+
+        $this->actingAs($other, 'sanctum')
+            ->putJson("/api/v1/inspection-assignments/{$assignment->id}/start")
+            ->assertStatus(403);
+
+        $this->assertDatabaseHas('inspection_assignments', [
+            'id' => $assignment->id,
+            'status' => 'assigned',
+        ]);
+    }
+
+    public function test_other_inspector_cannot_submit_assignment(): void
+    {
+        $other = $this->makeUser('inspector', 'assignothersubmit@example.com');
+        $assignment = $this->makeAssignment($this->makeWizardRequest());
+        $assignment->update(['status' => 'in_progress']);
+
+        $this->actingAs($other, 'sanctum')
+            ->putJson("/api/v1/inspection-assignments/{$assignment->id}/submit", [
+                'notes' => 'Done',
+            ])
+            ->assertStatus(403);
+
+        $this->assertDatabaseHas('inspection_assignments', [
+            'id' => $assignment->id,
+            'status' => 'in_progress',
+        ]);
+    }
+
+    public function test_submit_before_start_returns_422(): void
+    {
+        $assignment = $this->makeAssignment($this->makeWizardRequest());
+
+        $this->actingAs($this->inspector, 'sanctum')
+            ->putJson("/api/v1/inspection-assignments/{$assignment->id}/submit", [
+                'notes' => 'Not started',
+            ])
+            ->assertStatus(422);
+    }
+
+    public function test_submit_finalizes_inspection_and_request(): void
+    {
+        $request = $this->makeWizardRequest();
+        $assignment = $this->makeAssignment($request);
+
+        $this->actingAs($this->inspector, 'sanctum')
+            ->putJson("/api/v1/inspection-assignments/{$assignment->id}/start")
+            ->assertStatus(200);
+
+        $this->actingAs($this->inspector, 'sanctum')
+            ->putJson("/api/v1/inspection-assignments/{$assignment->id}/submit", [
+                'notes' => 'All good',
+            ])
+            ->assertStatus(200);
+
+        $this->assertDatabaseHas('inspection_assignments', [
+            'id' => $assignment->id,
+            'status' => 'submitted',
+        ]);
+
+        $this->assertDatabaseHas('inspection_requests', [
+            'id' => $request->id,
+            'status' => 'inspection_completed',
+        ]);
+
+        $inspection = Inspection::query()
+            ->where('inspection_request_id', $request->id)
+            ->firstOrFail();
+
+        $this->assertSame('completed', $inspection->status);
+        $this->assertNotNull($inspection->completed_at);
+    }
+
     public function test_inspector_can_load_checklist_for_request_without_establishment(): void
     {
         $assignment = $this->makeAssignment($this->makeWizardRequest());

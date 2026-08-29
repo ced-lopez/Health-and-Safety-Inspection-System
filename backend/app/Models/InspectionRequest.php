@@ -29,6 +29,7 @@ class InspectionRequest extends Model
         'business_name',
         'remarks',
         'status',
+        'preferred_schedule_at',
         'reviewed_by',
         'submitted_at',
         'reviewed_at',
@@ -41,6 +42,7 @@ class InspectionRequest extends Model
             'declared_animal_count' => 'integer',
             'submitted_at' => 'datetime',
             'reviewed_at' => 'datetime',
+            'preferred_schedule_at' => 'datetime',
         ];
     }
 

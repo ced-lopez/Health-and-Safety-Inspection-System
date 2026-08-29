@@ -13,6 +13,7 @@ use App\Models\Clearance;
 use App\Models\Establishment;
 use App\Models\Inspection;
 use App\Models\QrCode;
+use App\Notifications\ClearanceApproved;
 use App\Services\AuditLogger;
 use App\Services\DocumentPdfService;
 use Illuminate\Database\Eloquent\Model;
@@ -183,6 +184,8 @@ class CertificationController extends BaseApiController
             $request,
         );
 
+        $this->syncRequestToClearanceApproved($document);
+
         return $this->success(
             $this->resourceFor($document),
             'Document issued successfully',
@@ -215,6 +218,8 @@ class CertificationController extends BaseApiController
         ]);
 
         $this->ensureQrCode($document, strtoupper($kind));
+
+        $this->syncRequestToClearanceApproved($document);
 
         $this->logDocumentEvent(
             $document,
@@ -269,6 +274,8 @@ class CertificationController extends BaseApiController
 
         $document->update(['status' => 'active']);
         $document->qrCode?->update(['is_active' => true]);
+
+        $this->syncRequestToClearanceApproved($document);
 
         $this->logDocumentEvent(
             $document,
@@ -359,6 +366,8 @@ class CertificationController extends BaseApiController
             return $renewed;
         });
 
+        $this->syncRequestToClearanceApproved($renewed);
+
         $this->logDocumentEvent(
             $renewed,
             $this->moduleFor($renewed),
@@ -407,6 +416,29 @@ class CertificationController extends BaseApiController
             'qr_code' => new QrCodeResource($qrCode->refresh()),
             'document' => $this->resourceFor($qrCode->qrable),
         ], 'Document verified successfully');
+    }
+
+    private function syncRequestToClearanceApproved(Model $document): void
+    {
+        if ($document->status !== 'active') {
+            return;
+        }
+
+        $inspectionRequest = $document->inspection?->inspectionRequest;
+
+        if (! $inspectionRequest || $inspectionRequest->status !== 'inspection_completed') {
+            return;
+        }
+
+        $inspectionRequest->update(['status' => 'clearance_approved']);
+
+        $expiration = $document->expiration_date?->format('F j, Y');
+
+        $inspectionRequest->resident?->notify(new ClearanceApproved(
+            $this->numberFor($document),
+            $inspectionRequest->applicant_name,
+            $expiration ?: '12 months from issue',
+        ));
     }
 
     private function findDocument(string $kind, int $id): Certification|Clearance

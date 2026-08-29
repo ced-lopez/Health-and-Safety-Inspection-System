@@ -2,18 +2,23 @@
 
 namespace Tests\Feature;
 
+use App\Jobs\ProcessDocumentOcr;
 use App\Models\ApplicationType;
 use App\Models\Document;
+use App\Models\DocumentExtraction;
 use App\Models\InspectionCategory;
 use App\Models\InspectionRequest;
 use App\Models\Role;
 use App\Models\User;
 use App\Services\Ocr\DocumentClassifier;
 use App\Services\Ocr\DocumentFieldExtractor;
+use App\Services\Ocr\DocumentValidator;
 use App\Services\Ocr\OcrService;
 use Database\Seeders\InspectionTaxonomySeeder;
 use Database\Seeders\RoleSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
@@ -125,10 +130,9 @@ class DocumentOcrTest extends TestCase
     {
         Storage::fake('public');
         $document = $this->makeDocument();
-        $otherRequest = $this->request;
         $unrelated = Document::query()->create([
             'documentable_type' => InspectionRequest::class,
-            'documentable_id' => $otherRequest->id + 999,
+            'documentable_id' => $this->request->id + 999,
             'uploaded_by' => $this->resident->id,
             'document_type' => 'business_permit',
             'file_path' => 'documents/unrelated.png',
@@ -154,11 +158,15 @@ class DocumentOcrTest extends TestCase
             ->postJson("/api/v1/documents/{$document->id}/process-ocr");
 
         $response->assertStatus(200)
-            ->assertJsonPath('data.status', 'processed');
+            ->assertJsonPath('data.status', 'processed')
+            ->assertJsonPath('data.extraction.classification', 'business_permit')
+            ->assertJsonPath('data.extraction.ocr_status', 'completed')
+            ->assertJsonPath('data.extraction.fields.business_name.value', 'Sari-Sari Store');
 
         $this->assertDatabaseHas('document_extractions', [
             'document_id' => $document->id,
             'classification' => 'business_permit',
+            'ocr_status' => 'completed',
         ]);
         $this->assertDatabaseHas('audit_logs', [
             'event' => 'document.ocr_processed',
@@ -171,6 +179,8 @@ class DocumentOcrTest extends TestCase
         $this->assertSame('2025-01-15', $extraction->date_issued->toDateString());
         $this->assertFalse($extraction->is_expired);
         $this->assertGreaterThan(50, (float) $extraction->confidence_score);
+        $this->assertStringContainsString('BUSINESS PERMIT', $extraction->ocr_text);
+        $this->assertNotNull($extraction->processing_time_ms);
     }
 
     public function test_ocr_detects_missing_requirements_for_request(): void
@@ -205,6 +215,39 @@ class DocumentOcrTest extends TestCase
         $this->assertTrue($document->extraction->is_expired);
     }
 
+    public function test_low_confidence_fields_flag_document_for_review(): void
+    {
+        Storage::fake('public');
+        $document = $this->makeDocument();
+        $fake = $this->bindFakeOcrService();
+        $fake->setOcrText("BUSINESS PERMIT\nBusiness Name: ABC FOOD H0USE\nValid Until: 2999-01-01");
+
+        $this->actingAs($this->staff, 'sanctum')
+            ->postJson("/api/v1/documents/{$document->id}/process-ocr")
+            ->assertStatus(200)
+            ->assertJsonPath('data.status', 'needs_review')
+            ->assertJsonPath('data.extraction.ocr_status', 'needs_review');
+
+        $low = $document->extraction->low_confidence_fields ?? [];
+        $fields = array_column($low, 'field');
+        $this->assertContains('business_name', $fields);
+    }
+
+    public function test_unknown_document_is_flagged_for_review(): void
+    {
+        Storage::fake('public');
+        $document = $this->makeDocument();
+        $fake = $this->bindFakeOcrService();
+        $fake->setOcrText('random scribble text with no document meaning');
+
+        $this->actingAs($this->staff, 'sanctum')
+            ->postJson("/api/v1/documents/{$document->id}/process-ocr")
+            ->assertStatus(200)
+            ->assertJsonPath('data.extraction.classification', 'unknown')
+            ->assertJsonPath('data.extraction.ocr_status', 'needs_review')
+            ->assertJsonPath('data.status', 'needs_review');
+    }
+
     public function test_pdf_document_is_handled_without_crashing(): void
     {
         Storage::fake('public');
@@ -213,11 +256,104 @@ class DocumentOcrTest extends TestCase
 
         $this->actingAs($this->staff, 'sanctum')
             ->postJson("/api/v1/documents/{$document->id}/process-ocr")
-            ->assertStatus(200);
+            ->assertStatus(200)
+            ->assertJsonPath('data.extraction.classification', 'unknown')
+            ->assertJsonPath('data.extraction.ocr_status', 'needs_review');
 
         $extraction = $document->extraction;
-        $this->assertNull($extraction->classification);
+        $this->assertSame('unknown', $extraction->classification);
         $this->assertStringContainsString('PDF', $extraction->extracted_data['warning'] ?? '');
+    }
+
+    public function test_image_document_can_be_processed(): void
+    {
+        Storage::fake('public');
+        $document = $this->makeDocument('image/png', 'id.png');
+        $fake = $this->bindFakeOcrService();
+        $fake->setOcrText(
+            "REPUBLIC OF THE PHILIPPINES\nUNIFIED MULTIPURPOSE ID\nFull Name: JUAN DELA CRUZ\nID No: 1234-5678-9012\nDate of Birth: 1990-05-14"
+        );
+
+        $this->actingAs($this->staff, 'sanctum')
+            ->postJson("/api/v1/documents/{$document->id}/process-ocr")
+            ->assertStatus(200)
+            ->assertJsonPath('data.extraction.classification', 'government_id')
+            ->assertJsonPath('data.extraction.fields.full_name.value', 'JUAN DELA CRUZ');
+    }
+
+    public function test_staff_can_fetch_ocr_result(): void
+    {
+        Storage::fake('public');
+        $document = $this->makeDocument();
+        $fake = $this->bindFakeOcrService();
+
+        $this->actingAs($this->staff, 'sanctum')
+            ->postJson("/api/v1/documents/{$document->id}/process-ocr")
+            ->assertStatus(200);
+
+        $this->actingAs($this->staff, 'sanctum')
+            ->getJson("/api/v1/documents/{$document->id}/ocr")
+            ->assertStatus(200)
+            ->assertJsonPath('data.extraction.classification', 'business_permit')
+            ->assertJsonPath('data.extraction.ocr_text', $fake->ocrText);
+    }
+
+    public function test_staff_can_reprocess_document(): void
+    {
+        Storage::fake('public');
+        $document = $this->makeDocument();
+        $fake = $this->bindFakeOcrService();
+        $fake->setOcrText("BUSINESS PERMIT\nBusiness Name: First Read");
+
+        $this->actingAs($this->staff, 'sanctum')
+            ->postJson("/api/v1/documents/{$document->id}/process-ocr")
+            ->assertStatus(200)
+            ->assertJsonPath('data.extraction.fields.business_name.value', 'First Read');
+
+        $fake->setOcrText("BUSINESS PERMIT\nBusiness Name: Corrected Read\nValid Until: 2999-01-01");
+
+        $this->actingAs($this->staff, 'sanctum')
+            ->postJson("/api/v1/documents/{$document->id}/reprocess")
+            ->assertStatus(200)
+            ->assertJsonPath('data.extraction.fields.business_name.value', 'Corrected Read');
+
+        $this->assertDatabaseHas('audit_logs', [
+            'event' => 'document.ocr_reprocessed',
+            'auditable_id' => $document->id,
+        ]);
+    }
+
+    public function test_staff_can_correct_extracted_fields(): void
+    {
+        Storage::fake('public');
+        $document = $this->makeDocument();
+        $fake = $this->bindFakeOcrService();
+        $fake->setOcrText("BUSINESS PERMIT\nPermit No: 2025-045678\nBusiness Name: Sari-Sari StOre");
+
+        $this->actingAs($this->staff, 'sanctum')
+            ->postJson("/api/v1/documents/{$document->id}/process-ocr")
+            ->assertStatus(200);
+
+        $response = $this->actingAs($this->staff, 'sanctum')
+            ->putJson("/api/v1/documents/{$document->id}/extraction", [
+                'fields' => [
+                    'business_name' => ['value' => 'Sari-Sari Store', 'confidence' => 0.98],
+                ],
+            ]);
+
+        $response->assertStatus(200)
+            ->assertJsonPath('data.extraction.fields.business_name.value', 'Sari-Sari Store')
+            ->assertJsonPath('data.extraction.ocr_status', 'completed')
+            ->assertJsonPath('data.status', 'processed');
+
+        $this->assertDatabaseHas('document_extractions', [
+            'document_id' => $document->id,
+            'business_name' => 'Sari-Sari Store',
+        ]);
+        $this->assertDatabaseHas('audit_logs', [
+            'event' => 'document.extraction_updated',
+            'auditable_id' => $document->id,
+        ]);
     }
 
     public function test_staff_can_verify_document_and_logs_audit(): void
@@ -239,9 +375,127 @@ class DocumentOcrTest extends TestCase
         ]);
     }
 
+    public function test_upload_rejects_unsupported_file_type(): void
+    {
+        Storage::fake('public');
+
+        $this->actingAs($this->resident, 'sanctum')
+            ->postJson("/api/v1/inspection-requests/{$this->request->id}/documents", [
+                'document_type' => 'government_id',
+                'file' => UploadedFile::fake()->create('script.txt', 10),
+            ])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('file');
+
+        $this->assertDatabaseCount('documents', 0);
+    }
+
+    public function test_upload_rejects_oversized_file(): void
+    {
+        Storage::fake('public');
+        config()->set('ocr.max_file_size_kb', 100);
+
+        $this->actingAs($this->resident, 'sanctum')
+            ->postJson("/api/v1/inspection-requests/{$this->request->id}/documents", [
+                'document_type' => 'government_id',
+                'file' => UploadedFile::fake()->image('big.png')->size(200),
+            ])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('file');
+
+        $this->assertDatabaseCount('documents', 0);
+    }
+
+    public function test_upload_accepts_allowed_file_types(): void
+    {
+        Bus::fake([ProcessDocumentOcr::class]);
+        Storage::fake('public');
+
+        $this->actingAs($this->resident, 'sanctum')
+            ->postJson("/api/v1/inspection-requests/{$this->request->id}/documents", [
+                'document_type' => 'government_id',
+                'file' => UploadedFile::fake()->image('id.jpg'),
+            ])
+            ->assertStatus(201)
+            ->assertJsonPath('data.document_type', 'government_id');
+
+        $this->assertDatabaseCount('documents', 1);
+    }
+
+    public function test_upload_dispatches_automatic_ocr_job(): void
+    {
+        Bus::fake([ProcessDocumentOcr::class]);
+        Storage::fake('public');
+
+        $this->actingAs($this->resident, 'sanctum')
+            ->postJson("/api/v1/inspection-requests/{$this->request->id}/documents", [
+                'document_type' => 'government_id',
+                'file' => UploadedFile::fake()->image('id.png'),
+            ])
+            ->assertStatus(201)
+            ->assertJsonPath('data.status', 'processing');
+
+        Bus::assertDispatchedAfterResponse(ProcessDocumentOcr::class);
+
+        $this->assertDatabaseHas('documents', [
+            'status' => 'processing',
+        ]);
+    }
+
+    public function test_automatic_ocr_job_processes_uploaded_document(): void
+    {
+        Storage::fake('public');
+        $document = $this->makeDocument();
+        $this->bindFakeOcrService();
+
+        (new ProcessDocumentOcr($document->id))->handle(app(OcrService::class));
+
+        $this->assertDatabaseHas('document_extractions', [
+            'document_id' => $document->id,
+            'classification' => 'business_permit',
+            'ocr_status' => 'completed',
+        ]);
+
+        $this->assertDatabaseHas('documents', [
+            'id' => $document->id,
+            'status' => 'processed',
+        ]);
+    }
+
+    public function test_automatic_ocr_job_skips_already_processed_document(): void
+    {
+        Storage::fake('public');
+        $document = $this->makeDocument(attributes: ['status' => 'processed']);
+        DocumentExtraction::query()->create([
+            'document_id' => $document->id,
+            'classification' => 'business_permit',
+            'ocr_status' => 'completed',
+        ]);
+        $this->bindFakeOcrService();
+
+        (new ProcessDocumentOcr($document->id))->handle(app(OcrService::class));
+
+        $this->assertSame(1, DocumentExtraction::query()
+            ->where('document_id', $document->id)
+            ->count());
+    }
+
+    public function test_resident_cannot_upload_to_other_requests(): void
+    {
+        Storage::fake('public');
+        $other = $this->makeUser('resident', 'other@example.com');
+
+        $this->actingAs($other, 'sanctum')
+            ->postJson("/api/v1/inspection-requests/{$this->request->id}/documents", [
+                'document_type' => 'government_id',
+                'file' => UploadedFile::fake()->image('id.png'),
+            ])
+            ->assertStatus(403);
+    }
+
     private function bindFakeOcrService(): object
     {
-        $fake = new class(app(DocumentClassifier::class), app(DocumentFieldExtractor::class)) extends OcrService
+        $fake = new class(app(DocumentClassifier::class), app(DocumentFieldExtractor::class), app(DocumentValidator::class)) extends OcrService
         {
             public string $ocrText = "CITY OF CALOOCAN\nBUSINESS PERMIT\nBusiness Name: Sari-Sari Store\nOwner's Name: Juan Dela Cruz\nPermit No: 2025-045678\nDate Issued: 2025-01-15\nValid Until: 2999-01-01\nIssued by the Office of the Barangay Captain";
 
@@ -261,7 +515,7 @@ class DocumentOcrTest extends TestCase
         return $fake;
     }
 
-    private function makeDocument(string $mime = 'image/png', string $name = 'permit.png'): Document
+    private function makeDocument(string $mime = 'image/png', string $name = 'permit.png', array $attributes = []): Document
     {
         $data = $mime === 'application/pdf'
             ? '%PDF-1.4 test fixture'
@@ -270,7 +524,7 @@ class DocumentOcrTest extends TestCase
         $path = "documents/{$this->request->id}/{$name}";
         Storage::disk('public')->put($path, $data);
 
-        return Document::query()->create([
+        return Document::query()->create(array_merge([
             'documentable_type' => InspectionRequest::class,
             'documentable_id' => $this->request->id,
             'uploaded_by' => $this->resident->id,
@@ -281,7 +535,7 @@ class DocumentOcrTest extends TestCase
             'mime_type' => $mime,
             'file_size' => strlen($data),
             'status' => 'pending',
-        ]);
+        ], $attributes));
     }
 
     private function makePng(): string

@@ -4,7 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\Role;
 use App\Models\User;
-use App\Notifications\SendVerificationCode;
+use App\Notifications\RegistrationConfirmed;
 use Database\Seeders\RoleSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
@@ -37,7 +37,7 @@ class NotificationTest extends TestCase
             'is_active' => true,
         ]);
 
-        $user->notify(new SendVerificationCode('123456', 'email'));
+        $user->notify(new RegistrationConfirmed('Notif User'));
 
         $response = $this->actingAs($user, 'sanctum')->getJson('/api/v1/notifications?per_page=50');
 
@@ -58,8 +58,8 @@ class NotificationTest extends TestCase
         $payload = $response->json('data.notifications');
         $this->assertIsArray($payload);
         $this->assertCount(1, $payload);
-        $this->assertEquals('SendVerificationCode', $payload[0]['type']);
-        $this->assertStringContainsString('123456', $payload[0]['data']['message']);
+        $this->assertEquals('RegistrationConfirmed', $payload[0]['type']);
+        $this->assertStringContainsString('Registration Successful', $payload[0]['data']['title']);
         $this->assertNull($payload[0]['read_at']);
         $this->assertEquals(1, $response->json('data.unread_count'));
     }
@@ -75,8 +75,8 @@ class NotificationTest extends TestCase
             'is_active' => true,
         ]);
 
-        $user->notify(new SendVerificationCode('111111', 'email'));
-        $user->notify(new SendVerificationCode('222222', 'email'));
+        $user->notify(new RegistrationConfirmed('Notif User 2'));
+        $user->notify(new RegistrationConfirmed('Notif User 2'));
 
         $response = $this->actingAs($user, 'sanctum')->putJson('/api/v1/notifications/read-all');
 

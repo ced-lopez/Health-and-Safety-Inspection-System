@@ -9,11 +9,16 @@ import {
   CalendarDays,
   ClipboardCheck,
   Clock,
+  Database,
+  FileStack,
   FileText,
   History,
   Hourglass,
   Inbox,
+  Layers,
+  ShieldCheck,
   UserCheck,
+  Users,
 } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import { toast } from 'sonner'
@@ -68,8 +73,19 @@ const violationStatusConfig = {
   resolved: { label: 'Resolved', color: 'var(--color-chart-1)' },
 }
 
+const systemTotalsChartConfig = {
+  total: { label: 'Total', color: 'var(--color-chart-1)' },
+}
+
 const SEVERITY_COLORS = ['var(--color-chart-1)', 'var(--color-chart-2)', 'var(--color-chart-4)']
 const STATUS_COLORS = ['var(--color-chart-2)', 'var(--color-chart-1)']
+const CATEGORY_COLORS = [
+  'var(--color-chart-1)',
+  'var(--color-chart-2)',
+  'var(--color-chart-3)',
+  'var(--color-chart-4)',
+  'var(--color-chart-5)',
+]
 
 
 function requestStatusVariant() {
@@ -126,6 +142,14 @@ function clearanceVariant(daysLeft) {
   return 'outline'
 }
 
+function roleVariant(slug) {
+  const value = String(slug).toLowerCase()
+  if (value === 'administrator') return 'destructive'
+  if (value === 'barangay_staff') return 'default'
+  if (value === 'inspector') return 'secondary'
+  return 'outline'
+}
+
 function formatRelativeTime(isoValue) {
   if (!isoValue) {
     return 'Recently'
@@ -166,14 +190,20 @@ function titleCase(value) {
 }
 
 function buildMonthlySeries(rows) {
+  const list = Array.isArray(rows)
+    ? rows
+    : rows && typeof rows === 'object'
+      ? Object.values(rows)
+      : []
+
   return MONTH_LABELS.map((label, index) => {
-    const row = (rows ?? []).find((item) => Number(item.month) === index + 1)
+    const row = list.find((item) => Number(item.month) === index + 1) ?? {}
 
     return {
       month: label,
-      total: row?.total ?? 0,
-      completed: row?.completed ?? 0,
-      clearances: row?.clearances ?? 0,
+      total: row.total ?? 0,
+      completed: row.completed ?? 0,
+      clearances: row.clearances ?? 0,
     }
   })
 }
@@ -247,12 +277,18 @@ export default function DashboardPage() {
     },
   ]
 
-  const pendingRequests = data?.pending_requests ?? []
-  const assignedInspectors = data?.assigned_inspectors ?? []
-  const completedInspections = data?.completed_inspections ?? []
-  const activeViolations = data?.active_violations ?? []
-  const expiringClearances = data?.expiring_clearances ?? []
-  const recentActivities = data?.recent_activities ?? []
+  const pendingRequests = Array.isArray(data?.pending_requests) ? data.pending_requests : []
+  const assignedInspectors = Array.isArray(data?.assigned_inspectors) ? data.assigned_inspectors : []
+  const completedInspections = Array.isArray(data?.completed_inspections) ? data.completed_inspections : []
+  const activeViolations = Array.isArray(data?.active_violations) ? data.active_violations : []
+  const expiringClearances = Array.isArray(data?.expiring_clearances) ? data.expiring_clearances : []
+  const recentActivities = Array.isArray(data?.recent_activities) ? data.recent_activities : []
+  const systemTotals = data?.system_totals ?? {}
+  const recentUsers = Array.isArray(data?.recent_users) ? data.recent_users : []
+  const requestsByCategory = Array.isArray(data?.requests_by_category) ? data.requests_by_category : []
+  const establishmentsByCategory = Array.isArray(data?.establishments_by_category)
+    ? data.establishments_by_category
+    : []
 
   const chartYear = data?.chart?.year ?? new Date().getFullYear()
   const monthlySeries = buildMonthlySeries(data?.chart?.monthly ?? [])
@@ -268,6 +304,48 @@ export default function DashboardPage() {
     { key: 'resolved', label: 'Resolved', value: violationStats.by_status?.resolved ?? 0 },
   ]
   const hasViolations = severityData.some((item) => item.value > 0)
+
+  const systemTotalsList = [
+    {
+      title: 'Total Users',
+      value: systemTotals.total_users,
+      description: 'Registered accounts',
+      icon: Users,
+    },
+    {
+      title: 'Total Establishments',
+      value: systemTotals.total_establishments,
+      description: 'All time',
+      icon: Building2,
+    },
+    {
+      title: 'Total Requests',
+      value: systemTotals.total_requests,
+      description: 'Inspection requests',
+      icon: FileStack,
+    },
+    {
+      title: 'Total Inspections',
+      value: systemTotals.total_inspections,
+      description: 'All time',
+      icon: ClipboardCheck,
+    },
+    {
+      title: 'Total Violations',
+      value: systemTotals.total_violations,
+      description: 'Recorded',
+      icon: ShieldCheck,
+    },
+    {
+      title: 'Total Clearances',
+      value: systemTotals.total_clearances,
+      description: 'Issued',
+      icon: Layers,
+    },
+  ]
+
+  const hasRequestsByCategory = requestsByCategory.some((r) => r.total > 0)
+  const hasEstablishmentsByCategory = establishmentsByCategory.some((r) => r.total > 0)
 
   return (
     <div className="space-y-6">
@@ -304,6 +382,42 @@ export default function DashboardPage() {
                     <div className="text-3xl font-bold">
                       {isError ? '--' : (stat.value ?? 0)}
                     </div>
+                    <p className="text-xs text-muted-foreground">{stat.description}</p>
+                  </>
+                )}
+              </CardContent>
+            </Card>
+          )
+        })}
+      </div>
+
+      <div>
+        <div className="flex items-center gap-2">
+          <Database className="size-4 text-muted-foreground" />
+          <h3 className="text-lg font-semibold tracking-tight">System Overview</h3>
+          <span className="text-xs text-muted-foreground">All-time totals</span>
+        </div>
+        <p className="text-sm text-muted-foreground">Lifetime counts across all modules</p>
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+        {systemTotalsList.map((stat) => {
+          const Icon = stat.icon
+          return (
+            <Card key={stat.title} className="border-dashed">
+              <CardHeader className="flex flex-row items-center justify-between pb-2">
+                <CardTitle className="text-sm font-medium">{stat.title}</CardTitle>
+                <Icon className="size-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                {loading ? (
+                  <div className="space-y-2">
+                    <Skeleton className="h-9 w-16" />
+                    <Skeleton className="h-4 w-28" />
+                  </div>
+                ) : (
+                  <>
+                    <div className="text-3xl font-bold">{isError ? '--' : (stat.value ?? 0)}</div>
                     <p className="text-xs text-muted-foreground">{stat.description}</p>
                   </>
                 )}
@@ -567,6 +681,126 @@ export default function DashboardPage() {
                 ))}
               </div>
             </WidgetBody>
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-3">
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Users className="size-4 text-muted-foreground" />
+              Recent Registrations
+            </CardTitle>
+            <CardDescription>Newest accounts created</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <WidgetBody
+              loading={loading}
+              isError={isError}
+              isEmpty={recentUsers.length === 0}
+              emptyText="No registered users yet."
+            >
+              <div className="divide-y divide-border">
+                {recentUsers.map((u) => (
+                  <div key={u.id} className="flex items-start gap-3 py-3 first:pt-0 last:pb-0">
+                    <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary ring-1 ring-primary/20">
+                      {String(u.name).split(' ').map((p) => p[0]).join('').slice(0, 2).toUpperCase()}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                        <p className="truncate text-sm font-medium">{u.name}</p>
+                        <Badge variant={roleVariant(u.role_slug)}>{titleCase(u.role)}</Badge>
+                        {!u.is_active && <Badge variant="outline">Inactive</Badge>}
+                      </div>
+                      <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                        {u.email} &middot; {formatRelativeTime(u.created_at)}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </WidgetBody>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Layers className="size-4 text-muted-foreground" />
+              Requests by Category
+            </CardTitle>
+            <CardDescription>Inspection requests per category</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {loading ? (
+              <Skeleton className="h-64 w-full" />
+            ) : isError ? (
+              <p className="py-8 text-center text-sm text-muted-foreground">Chart data is unavailable.</p>
+            ) : hasRequestsByCategory ? (
+              <ChartContainer config={systemTotalsChartConfig} className="h-64 w-full">
+                <BarChart data={requestsByCategory} layout="vertical" margin={{ left: 8 }}>
+                  <CartesianGrid horizontal={false} />
+                  <XAxis type="number" tickLine={false} axisLine={false} allowDecimals={false} />
+                  <YAxis
+                    type="category"
+                    dataKey="category"
+                    tickLine={false}
+                    axisLine={false}
+                    width={110}
+                    tick={{ fontSize: 12 }}
+                  />
+                  <ChartTooltip cursor={false} content={<ChartTooltipContent hideLabel />} />
+                  <Bar dataKey="total" radius={4}>
+                    {requestsByCategory.map((entry, i) => (
+                      <Cell key={entry.slug} fill={CATEGORY_COLORS[i % CATEGORY_COLORS.length]} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ChartContainer>
+            ) : (
+              <p className="py-8 text-center text-sm text-muted-foreground">No requests recorded yet.</p>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Building2 className="size-4 text-muted-foreground" />
+              Establishments by Category
+            </CardTitle>
+            <CardDescription>Registered establishments per category</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {loading ? (
+              <Skeleton className="h-64 w-full" />
+            ) : isError ? (
+              <p className="py-8 text-center text-sm text-muted-foreground">Chart data is unavailable.</p>
+            ) : hasEstablishmentsByCategory ? (
+              <ChartContainer config={systemTotalsChartConfig} className="h-64 w-full">
+                <BarChart data={establishmentsByCategory} layout="vertical" margin={{ left: 8 }}>
+                  <CartesianGrid horizontal={false} />
+                  <XAxis type="number" tickLine={false} axisLine={false} allowDecimals={false} />
+                  <YAxis
+                    type="category"
+                    dataKey="category"
+                    tickLine={false}
+                    axisLine={false}
+                    width={110}
+                    tick={{ fontSize: 12 }}
+                  />
+                  <ChartTooltip cursor={false} content={<ChartTooltipContent hideLabel />} />
+                  <Bar dataKey="total" radius={4}>
+                    {establishmentsByCategory.map((entry, i) => (
+                      <Cell key={entry.category} fill={CATEGORY_COLORS[i % CATEGORY_COLORS.length]} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ChartContainer>
+            ) : (
+              <p className="py-8 text-center text-sm text-muted-foreground">No establishments recorded yet.</p>
+            )}
           </CardContent>
         </Card>
       </div>

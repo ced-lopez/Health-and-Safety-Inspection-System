@@ -19,6 +19,7 @@ use App\Http\Controllers\Api\InspectionScheduleController;
 use App\Http\Controllers\Api\MyClearanceController;
 use App\Http\Controllers\Api\MyEstablishmentController;
 use App\Http\Controllers\Api\NotificationController;
+use App\Http\Controllers\Api\OcrResultController;
 use App\Http\Controllers\Api\ReportController;
 use App\Http\Controllers\Api\ViolationController;
 use Illuminate\Support\Facades\Route;
@@ -142,6 +143,10 @@ Route::prefix('v1')->group(function () {
                 ->middleware('role:administrator,barangay_staff');
             Route::post('/{inspection_request}/assign', [InspectionRequestController::class, 'assign'])
                 ->middleware('role:administrator,barangay_staff');
+            Route::put('/{inspection_request}/preferred-schedule', [InspectionRequestController::class, 'setPreferredSchedule']);
+            Route::delete('/{inspection_request}/preferred-schedule', [InspectionRequestController::class, 'clearPreferredSchedule']);
+            Route::post('/{inspection_request}/confirm-schedule', [InspectionScheduleController::class, 'confirmPreferred'])
+                ->middleware('role:administrator,barangay_staff');
 
             Route::get('/{inspection_request}/documents', [DocumentController::class, 'index']);
             Route::post('/{inspection_request}/documents', [DocumentController::class, 'upload']);
@@ -192,6 +197,7 @@ Route::prefix('v1')->group(function () {
             Route::get('/violations', [ReportController::class, 'violations']);
             Route::get('/clearances', [ReportController::class, 'clearances']);
             Route::get('/dashboard', [ReportController::class, 'dashboard']);
+            Route::get('/soba', [ReportController::class, 'soba']);
         });
 
         Route::prefix('audit-logs')->middleware('role:administrator,barangay_staff')->group(function () {
@@ -206,8 +212,11 @@ Route::prefix('v1')->group(function () {
 
         Route::prefix('documents')->middleware('role:administrator,barangay_staff')->group(function () {
             Route::get('/{document}', [DocumentController::class, 'show']);
+            Route::get('/{document}/ocr', [DocumentController::class, 'ocrResult']);
             Route::get('/{document}/download', [DocumentController::class, 'download']);
             Route::post('/{document}/process-ocr', [DocumentController::class, 'processOcr']);
+            Route::post('/{document}/reprocess', [DocumentController::class, 'reprocessOcr']);
+            Route::put('/{document}/extraction', [DocumentController::class, 'updateExtraction']);
             Route::put('/{document}/verify', [DocumentController::class, 'verify']);
         });
 
@@ -216,6 +225,18 @@ Route::prefix('v1')->group(function () {
             Route::post('/users', [AdminUserController::class, 'store']);
             Route::put('/users/{user}', [AdminUserController::class, 'update']);
             Route::delete('/users/{user}', [AdminUserController::class, 'destroy']);
+        });
+
+        Route::prefix('admin/ocr-results')->middleware('role:administrator,barangay_staff')->group(function () {
+            Route::get('/', [OcrResultController::class, 'index']);
+            Route::get('/stats', [OcrResultController::class, 'stats']);
+            Route::get('/{document}/history', [OcrResultController::class, 'history']);
+            Route::get('/{document}', [OcrResultController::class, 'show']);
+            Route::patch('/{document}/fields', [OcrResultController::class, 'updateFields']);
+            Route::post('/{document}/verify', [OcrResultController::class, 'verify']);
+            Route::post('/{document}/reject', [OcrResultController::class, 'reject']);
+            Route::post('/{document}/request-reupload', [OcrResultController::class, 'requestReupload']);
+            Route::post('/{document}/reprocess', [OcrResultController::class, 'reprocess']);
         });
     });
 });

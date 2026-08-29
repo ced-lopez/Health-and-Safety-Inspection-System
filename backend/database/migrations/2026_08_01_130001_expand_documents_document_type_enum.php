@@ -13,7 +13,6 @@ return new class extends Migration
 
         DB::statement('ALTER TABLE documents DROP CONSTRAINT IF EXISTS documents_document_type_check');
         DB::statement("ALTER TABLE documents ADD CONSTRAINT documents_document_type_check CHECK (document_type IN (
-            'application_form',
             'government_id',
             'cedula',
             'proof_of_location',

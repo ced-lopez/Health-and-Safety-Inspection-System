@@ -30,6 +30,21 @@ export async function reviewInspectionRequest(id, payload) {
   return data
 }
 
+export async function setPreferredSchedule(id, payload) {
+  const { data } = await api.put(`/v1/inspection-requests/${id}/preferred-schedule`, payload)
+  return data
+}
+
+export async function clearPreferredSchedule(id) {
+  const { data } = await api.delete(`/v1/inspection-requests/${id}/preferred-schedule`)
+  return data
+}
+
+export async function confirmPreferredSchedule(id, payload) {
+  const { data } = await api.post(`/v1/inspection-requests/${id}/confirm-schedule`, payload)
+  return data
+}
+
 export async function assignInspectionRequest(id, payload) {
   const { data } = await api.post(`/v1/inspection-requests/${id}/assign`, payload)
   return data

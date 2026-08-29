@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\ApplicationType;
 use App\Models\Establishment;
 use App\Models\Inspection;
+use App\Models\InspectionAssignment;
 use App\Models\InspectionCategory;
 use App\Models\InspectionRequest;
 use App\Models\InspectionSchedule;
@@ -187,6 +188,86 @@ class InspectionScheduleTest extends TestCase
             'establishment_id' => null,
             'inspector_id' => $this->inspector->id,
         ]);
+
+        $this->assertDatabaseHas('inspection_assignments', [
+            'inspection_request_id' => $request->id,
+            'inspector_id' => $this->inspector->id,
+            'assigned_by' => $this->barangayStaff->id,
+            'status' => 'assigned',
+        ]);
+    }
+
+    public function test_scheduling_an_approved_request_marks_it_assigned(): void
+    {
+        $resident = $this->makeUser('resident', 'scheduleassigned@example.com');
+
+        $request = InspectionRequest::query()->create([
+            'request_number' => 'REQ-'.strtoupper(substr(uniqid(), -6)),
+            'resident_id' => $resident->id,
+            'inspection_category_id' => InspectionCategory::where('slug', 'piggery')->firstOrFail()->id,
+            'application_type_id' => ApplicationType::where('slug', 'new_application')->firstOrFail()->id,
+            'applicant_name' => 'Juan Dela Cruz',
+            'applicant_address' => 'Barangay 178',
+            'contact_number' => '09171234567',
+            'email' => 'juan@example.com',
+            'business_name' => 'Piggery Farm',
+            'status' => 'approved_for_inspection',
+        ]);
+
+        $this->actingAs($this->barangayStaff, 'sanctum')
+            ->postJson('/api/v1/inspections/schedules', [
+                'inspector_id' => $this->inspector->id,
+                'scheduled_date' => now()->addDay()->toDateString(),
+                'scheduled_time' => '09:30',
+                'status' => 'scheduled',
+                'inspection_request_id' => $request->id,
+            ])
+            ->assertStatus(201);
+
+        $this->assertDatabaseHas('inspection_requests', [
+            'id' => $request->id,
+            'status' => 'assigned',
+        ]);
+    }
+
+    public function test_scheduling_does_not_duplicate_existing_assignment(): void
+    {
+        $resident = $this->makeUser('resident', 'schedulenodup@example.com');
+
+        $request = InspectionRequest::query()->create([
+            'request_number' => 'REQ-'.strtoupper(substr(uniqid(), -6)),
+            'resident_id' => $resident->id,
+            'inspection_category_id' => InspectionCategory::where('slug', 'piggery')->firstOrFail()->id,
+            'application_type_id' => ApplicationType::where('slug', 'new_application')->firstOrFail()->id,
+            'applicant_name' => 'Juan Dela Cruz',
+            'applicant_address' => 'Barangay 178',
+            'contact_number' => '09171234567',
+            'email' => 'juan@example.com',
+            'business_name' => 'Piggery Farm',
+            'status' => 'assigned',
+        ]);
+
+        InspectionAssignment::query()->create([
+            'inspection_request_id' => $request->id,
+            'inspector_id' => $this->inspector->id,
+            'assigned_by' => $this->barangayStaff->id,
+            'status' => 'assigned',
+            'assigned_at' => now(),
+        ]);
+
+        $this->actingAs($this->barangayStaff, 'sanctum')
+            ->postJson('/api/v1/inspections/schedules', [
+                'inspector_id' => $this->inspector->id,
+                'scheduled_date' => now()->addDay()->toDateString(),
+                'scheduled_time' => '09:30',
+                'status' => 'scheduled',
+                'inspection_request_id' => $request->id,
+            ])
+            ->assertStatus(201);
+
+        $this->assertSame(1, InspectionAssignment::query()
+            ->where('inspection_request_id', $request->id)
+            ->count());
     }
 
     public function test_establishment_required_when_scheduling_without_request(): void

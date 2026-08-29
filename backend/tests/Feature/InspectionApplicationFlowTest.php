@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Jobs\ProcessDocumentOcr;
 use App\Models\ApplicationType;
 use App\Models\Establishment;
 use App\Models\InspectionCategory;
@@ -12,6 +13,7 @@ use Database\Seeders\InspectionTaxonomySeeder;
 use Database\Seeders\RoleSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
@@ -167,7 +169,7 @@ class InspectionApplicationFlowTest extends TestCase
         $this->assertContains('neighbor_waiver', $piggeryTypes);
 
         $coreRequired = array_filter($piggeryTypes, fn ($type) => in_array($type, [
-            'government_id', 'cedula', 'application_form', 'proof_of_location', 'vicinity_map',
+            'government_id', 'cedula', 'proof_of_location', 'vicinity_map',
         ], true));
         $this->assertNotEmpty($coreRequired);
     }
@@ -186,6 +188,8 @@ class InspectionApplicationFlowTest extends TestCase
 
     public function test_resident_can_upload_typed_document_to_own_request(): void
     {
+        Bus::fake([ProcessDocumentOcr::class]);
+
         $request = $this->actingAs($this->resident, 'sanctum')
             ->postJson('/api/v1/inspection-requests', $this->payload())
             ->assertStatus(201)
@@ -216,6 +220,8 @@ class InspectionApplicationFlowTest extends TestCase
 
     public function test_resident_cannot_upload_to_another_residents_request(): void
     {
+        Bus::fake([ProcessDocumentOcr::class]);
+
         $owner = $this->createResident('owner@example.com');
         $request = $this->actingAs($owner, 'sanctum')
             ->postJson('/api/v1/inspection-requests', $this->payload())
@@ -236,28 +242,38 @@ class InspectionApplicationFlowTest extends TestCase
         $this->assertDatabaseCount('documents', 0);
     }
 
-    public function test_wizard_request_auto_creates_linked_establishment(): void
+    public function test_wizard_request_never_creates_establishment(): void
     {
         $response = $this->actingAs($this->resident, 'sanctum')
             ->postJson('/api/v1/inspection-requests', $this->payload());
 
         $response->assertStatus(201);
-
         $request = InspectionRequest::query()->findOrFail($response->json('data.id'));
 
-        $this->assertNotNull($request->establishment_id);
+        $this->assertNull($request->establishment_id);
+        $this->assertDatabaseCount('establishments', 0);
 
-        $this->assertDatabaseHas('establishments', [
-            'id' => $request->establishment_id,
-            'resident_id' => $this->resident->id,
-            'ownership_status' => 'linked',
-            'name' => 'Juan Dela Cruz',
-            'owner_name' => 'Juan Dela Cruz',
-            'address' => 'Barangay 178, Caloocan City',
+        $staff = User::query()->create([
+            'role_id' => Role::where('slug', 'barangay_staff')->firstOrFail()->id,
+            'name' => 'Approver',
+            'email' => 'approver@example.com',
+            'password' => bcrypt('Password123!'),
+            'is_active' => true,
         ]);
+
+        $this->actingAs($staff, 'sanctum')
+            ->putJson("/api/v1/inspection-requests/{$request->id}/review", [
+                'status' => 'approved_for_inspection',
+            ])
+            ->assertStatus(200)
+            ->assertJsonPath('data.status', 'approved_for_inspection');
+
+        $request->refresh();
+        $this->assertNull($request->establishment_id);
+        $this->assertDatabaseCount('establishments', 0);
     }
 
-    public function test_second_application_reuses_existing_establishment(): void
+    public function test_repeated_applications_do_not_create_establishments(): void
     {
         $this->actingAs($this->resident, 'sanctum')
             ->postJson('/api/v1/inspection-requests', $this->payload([
@@ -271,9 +287,7 @@ class InspectionApplicationFlowTest extends TestCase
             ]))
             ->assertStatus(201);
 
-        $this->assertDatabaseCount('establishments', 1);
-        $establishmentId = Establishment::query()->firstOrFail()->id;
-        $this->assertSame(2, InspectionRequest::query()->where('establishment_id', $establishmentId)->count());
+        $this->assertDatabaseCount('establishments', 0);
     }
 
     public function test_explicit_establishment_is_not_auto_created(): void

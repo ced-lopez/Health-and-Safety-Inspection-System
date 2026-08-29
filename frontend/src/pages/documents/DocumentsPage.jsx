@@ -159,7 +159,7 @@ export default function DocumentsPage() {
                 {filtered.map((req) => (
                   <TableRow key={req.id}>
                     <TableCell className="font-medium">{req.business_name ?? 'N/A'}</TableCell>
-                    <TableCell className="capitalize">{req.category?.replace(/_/g, ' ')}</TableCell>
+                    <TableCell className="capitalize">{req.inspection_category?.name ?? 'N/A'}</TableCell>
                     <TableCell>{req.documents_count ?? req.documents?.length ?? 0}</TableCell>
                     <TableCell className="text-right">
                       <Button variant="outline" size="sm" onClick={() => openDocuments(req)}>
@@ -192,7 +192,7 @@ export default function DocumentsPage() {
                   <div className="flex items-center gap-2 min-w-0">
                     <FileText className="size-4 shrink-0 text-muted-foreground" />
                     <div className="min-w-0">
-                      <p className="text-sm font-medium truncate">{doc.file_name ?? doc.filename ?? 'Document'}</p>
+                      <p className="text-sm font-medium truncate">{doc.original_name ?? doc.file_name ?? doc.filename ?? 'Document'}</p>
                       <p className="text-xs text-muted-foreground">{formatDate(doc.created_at)}</p>
                     </div>
                   </div>
@@ -216,14 +216,14 @@ export default function DocumentsPage() {
         <DialogContent className="sm:max-w-xl">
           <DialogHeader>
             <DialogTitle>Document Details</DialogTitle>
-            <DialogDescription>{selectedDoc?.file_name ?? selectedDoc?.filename ?? ''}</DialogDescription>
+            <DialogDescription>{selectedDoc?.original_name ?? selectedDoc?.file_name ?? selectedDoc?.filename ?? ''}</DialogDescription>
           </DialogHeader>
           {detailLoading ? (
             <Skeleton className="h-32 w-full" />
           ) : selectedDoc ? (
             <div className="space-y-4">
               <div className="grid gap-3 text-sm sm:grid-cols-2">
-                <div><p className="text-xs text-muted-foreground">File Name</p><p className="font-medium">{selectedDoc.file_name ?? selectedDoc.filename ?? 'N/A'}</p></div>
+                <div><p className="text-xs text-muted-foreground">File Name</p><p className="font-medium">{selectedDoc.original_name ?? selectedDoc.file_name ?? selectedDoc.filename ?? 'N/A'}</p></div>
                 <div><p className="text-xs text-muted-foreground">Status</p><p className="font-medium"><Badge variant={selectedDoc.status === 'verified' ? 'default' : selectedDoc.status === 'processed' ? 'secondary' : 'outline'}>{selectedDoc.status ?? 'pending'}</Badge></p></div>
                 <div><p className="text-xs text-muted-foreground">Type</p><p className="font-medium capitalize">{selectedDoc.document_type ?? selectedDoc.mime_type ?? 'N/A'}</p></div>
                 <div><p className="text-xs text-muted-foreground">Uploaded</p><p className="font-medium">{formatDate(selectedDoc.created_at)}</p></div>

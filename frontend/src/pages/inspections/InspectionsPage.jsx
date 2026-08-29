@@ -8,6 +8,7 @@ import {
   Save,
   Search,
   Trash2,
+  UserCheck,
 } from 'lucide-react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { toast } from 'sonner'
@@ -54,6 +55,11 @@ import {
   updateInspectionReport,
   updateInspectionSchedule,
 } from '@/services/inspectionService'
+import {
+  assignInspectionRequest,
+  fetchInspectionQueue,
+} from '@/services/inspectionRequestService'
+import { CHECKLIST_CATEGORY_LABELS as checklistCategoryLabels } from '@/utils/constants'
 
 const emptyForm = {
   establishment_id: '',
@@ -83,12 +89,6 @@ const reportStatusLabels = {
   needs_correction: 'Needs Correction',
 }
 
-const checklistCategoryLabels = {
-  health_sanitation: 'Health and Sanitation',
-  fire_safety: 'Fire Safety',
-  workplace_safety: 'Workplace Safety',
-}
-
 function statusVariant(status) {
   if (status === 'completed') {
     return 'default'
@@ -113,6 +113,26 @@ function formatDate(value) {
   })
 }
 
+function queueCategoryName(req) {
+  return req?.inspection_category?.name ?? 'N/A'
+}
+
+function queueStatusLabel(status) {
+  if (status === 'approved_for_inspection') {
+    return 'Approved'
+  }
+
+  if (status === 'assigned') {
+    return 'Assigned'
+  }
+
+  return status ?? ''
+}
+
+function queueStatusVariant(status) {
+  return status === 'assigned' ? 'secondary' : 'default'
+}
+
 function toDateInput(date) {
   if (!date) {
     return ''
@@ -128,6 +148,7 @@ function toDateInput(date) {
 export default function InspectionsPage() {
   const { user } = useAuth()
   const [schedules, setSchedules] = useState([])
+  const [view, setView] = useState('list')
   const [establishments, setEstablishments] = useState([])
   const [inspectors, setInspectors] = useState([])
   const [meta, setMeta] = useState({ current_page: 1, last_page: 1, total: 0 })
@@ -159,6 +180,20 @@ export default function InspectionsPage() {
   })
   const [reportLoading, setReportLoading] = useState(false)
   const [reportSubmitting, setReportSubmitting] = useState(false)
+  const [assignDialogOpen, setAssignDialogOpen] = useState(false)
+  const [assignRequest, setAssignRequest] = useState(null)
+  const [assigneeId, setAssigneeId] = useState('')
+  const [assignSubmitting, setAssignSubmitting] = useState(false)
+  const [scheduleDialogOpen, setScheduleDialogOpen] = useState(false)
+  const [scheduleRequest, setScheduleRequest] = useState(null)
+  const [scheduleForm, setScheduleForm] = useState({
+    inspector_id: '',
+    scheduled_date: '',
+    scheduled_time: '',
+    notes: '',
+  })
+  const [scheduleErrors, setScheduleErrors] = useState({})
+  const [scheduleSubmitting, setScheduleSubmitting] = useState(false)
 
   const roleSlug = user?.role?.slug
   const canWrite = ['administrator', 'barangay_staff'].includes(roleSlug)
@@ -190,6 +225,17 @@ export default function InspectionsPage() {
     queryFn: async () => fetchInspectionSchedules(queryParams),
     placeholderData: keepPreviousData,
   })
+
+  const queueQuery = useQuery({
+    queryKey: ['inspection-queue-pending'],
+    queryFn: () => fetchInspectionQueue({ per_page: 50, pending_schedule: true }),
+    enabled: view === 'queue',
+  })
+
+  const needsScheduling = useMemo(() => {
+    const raw = queueQuery.data?.data?.queue ?? queueQuery.data?.queue
+    return Array.isArray(raw) ? raw : Array.isArray(raw?.data) ? raw.data : []
+  }, [queueQuery.data])
 
   useEffect(() => {
     if (optionsQuery.isError) {
@@ -336,6 +382,88 @@ export default function InspectionsPage() {
     } catch (error) {
       toast.error('Unable to archive inspection schedule')
       console.error(error)
+    }
+  }
+
+  function openAssignDialog(request) {
+    setAssignRequest(request)
+    setAssigneeId(String(request.inspection_assignment?.inspector_id ?? ''))
+    setAssignDialogOpen(true)
+  }
+
+  async function handleAssign() {
+    if (!assignRequest || !assigneeId) {
+      return
+    }
+
+    setAssignSubmitting(true)
+
+    try {
+      await assignInspectionRequest(assignRequest.id, { inspector_id: assigneeId })
+      toast.success('Inspector assigned')
+      setAssignDialogOpen(false)
+      await queueQuery.refetch()
+    } catch (error) {
+      toast.error(error.response?.data?.message ?? 'Unable to assign inspector')
+      console.error(error)
+    } finally {
+      setAssignSubmitting(false)
+    }
+  }
+
+  function openScheduleDialog(request) {
+    setScheduleRequest(request)
+    setScheduleForm({
+      inspector_id: String(request.inspection_assignment?.inspector_id ?? ''),
+      scheduled_date: toDateInput(new Date()),
+      scheduled_time: '',
+      notes: '',
+    })
+    setScheduleErrors({})
+    setScheduleDialogOpen(true)
+  }
+
+  function updateScheduleForm(key, value) {
+    setScheduleForm((current) => ({ ...current, [key]: value }))
+    setScheduleErrors((current) => ({ ...current, [key]: undefined }))
+  }
+
+  async function handleScheduleSubmit(event) {
+    event.preventDefault()
+
+    if (!scheduleRequest) {
+      return
+    }
+
+    setScheduleSubmitting(true)
+    setScheduleErrors({})
+
+    try {
+      await createInspectionSchedule({
+        inspection_request_id: scheduleRequest.id,
+        inspector_id: Number(scheduleForm.inspector_id),
+        scheduled_date: scheduleForm.scheduled_date,
+        scheduled_time: scheduleForm.scheduled_time || null,
+        status: 'scheduled',
+        notes: scheduleForm.notes,
+      })
+      toast.success('Inspection scheduled')
+      setScheduleDialogOpen(false)
+      await queueQuery.refetch()
+      await schedulesQuery.refetch()
+    } catch (error) {
+      const validationErrors = error.response?.data?.errors
+
+      if (validationErrors) {
+        setScheduleErrors(validationErrors)
+        toast.error('Please review the highlighted fields')
+      } else {
+        toast.error('Unable to schedule inspection')
+      }
+
+      console.error(error)
+    } finally {
+      setScheduleSubmitting(false)
     }
   }
 
@@ -491,10 +619,11 @@ export default function InspectionsPage() {
         )}
       </div>
 
-      <Tabs defaultValue="list">
+      <Tabs value={view} onValueChange={setView}>
         <TabsList>
           <TabsTrigger value="list">List View</TabsTrigger>
           <TabsTrigger value="calendar">Calendar View</TabsTrigger>
+          <TabsTrigger value="queue">Needs Scheduling</TabsTrigger>
         </TabsList>
         <TabsContent value="list">
           <Card>
@@ -642,7 +771,12 @@ export default function InspectionsPage() {
                     >
                       <div className="flex items-start justify-between gap-3">
                         <div>
-                          <p className="font-medium">{schedule.establishment?.name}</p>
+                          <p className="font-medium">
+                            {schedule.establishment?.name ??
+                              schedule.request?.business_name ??
+                              schedule.request?.applicant_name ??
+                              'Unknown'}
+                          </p>
                           <p className="text-sm text-muted-foreground">
                             {schedule.scheduled_time?.slice(0, 5) ?? 'No time'} -
                             {schedule.inspector?.name ?? 'Unassigned'}
@@ -658,6 +792,91 @@ export default function InspectionsPage() {
               </CardContent>
             </Card>
           </div>
+        </TabsContent>
+        <TabsContent value="queue">
+          <Card>
+            <CardHeader>
+              <CardTitle>Approved Requests</CardTitle>
+              <CardDescription>
+                Assign an inspector and schedule the visit. Requests disappear once
+                scheduled.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {queueQuery.isLoading ? (
+                <div className="space-y-3">
+                  <Skeleton className="h-10 w-full" />
+                  <Skeleton className="h-10 w-full" />
+                </div>
+              ) : needsScheduling.length === 0 ? (
+                <p className="py-8 text-center text-sm text-muted-foreground">
+                  No approved requests awaiting scheduling.
+                </p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Request No.</TableHead>
+                        <TableHead>Business</TableHead>
+                        <TableHead>Category</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Inspector</TableHead>
+                        <TableHead className="text-right">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {needsScheduling.map((requestItem) => (
+                        <TableRow key={requestItem.id}>
+                          <TableCell className="font-mono text-xs">
+                            {requestItem.request_number}
+                          </TableCell>
+                          <TableCell className="font-medium">
+                            {requestItem.business_name ??
+                              requestItem.applicant_name ??
+                              'N/A'}
+                          </TableCell>
+                          <TableCell>{queueCategoryName(requestItem)}</TableCell>
+                          <TableCell>
+                            <Badge variant={queueStatusVariant(requestItem.status)}>
+                              {queueStatusLabel(requestItem.status)}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            {requestItem.inspection_assignment?.inspector?.name ??
+                              'Not assigned'}
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex justify-end gap-2">
+                              {requestItem.status === 'approved_for_inspection' &&
+                                !requestItem.inspection_assignment && (
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => openAssignDialog(requestItem)}
+                                  >
+                                    <UserCheck className="size-4" />
+                                    Assign
+                                  </Button>
+                                )}
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => openScheduleDialog(requestItem)}
+                              >
+                                <CalendarPlus className="size-4" />
+                                Schedule
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
         </TabsContent>
       </Tabs>
 
@@ -1000,6 +1219,117 @@ export default function InspectionsPage() {
           )}
         </DialogContent>
       </Dialog>
+
+      <Dialog open={assignDialogOpen} onOpenChange={setAssignDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Assign Inspector</DialogTitle>
+            <DialogDescription>
+              {assignRequest?.request_number} · {assignRequest?.business_name}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="assign-inspector">Select Inspector</Label>
+              <select
+                id="assign-inspector"
+                className="h-8 w-full rounded-lg border border-input bg-background px-2.5 text-sm"
+                value={assigneeId}
+                onChange={(event) => setAssigneeId(event.target.value)}
+              >
+                <option value="">Choose inspector</option>
+                {inspectors.map((inspector) => (
+                  <option key={inspector.id} value={inspector.id}>
+                    {inspector.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setAssignDialogOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                disabled={!assigneeId || assignSubmitting}
+                onClick={handleAssign}
+              >
+                {assignSubmitting ? 'Assigning...' : 'Assign'}
+              </Button>
+            </DialogFooter>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={scheduleDialogOpen} onOpenChange={setScheduleDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Schedule Inspection</DialogTitle>
+            <DialogDescription>
+              {scheduleRequest?.request_number} · {scheduleRequest?.business_name}
+            </DialogDescription>
+          </DialogHeader>
+          <form className="space-y-4" onSubmit={handleScheduleSubmit}>
+            <SelectField
+              label="Inspector"
+              value={scheduleForm.inspector_id}
+              error={scheduleErrors.inspector_id}
+              onChange={(value) => updateScheduleForm('inspector_id', value)}
+            >
+              <option value="">Select inspector</option>
+              {inspectors.map((inspector) => (
+                <option key={inspector.id} value={inspector.id}>
+                  {inspector.name}
+                </option>
+              ))}
+            </SelectField>
+            <Field
+              label="Scheduled date"
+              type="date"
+              value={scheduleForm.scheduled_date}
+              error={scheduleErrors.scheduled_date}
+              onChange={(value) => updateScheduleForm('scheduled_date', value)}
+            />
+            <Field
+              label="Scheduled time"
+              type="time"
+              value={scheduleForm.scheduled_time}
+              error={scheduleErrors.scheduled_time}
+              required={false}
+              onChange={(value) => updateScheduleForm('scheduled_time', value)}
+            />
+            <div className="space-y-2">
+              <Label>Notes</Label>
+              <textarea
+                className="min-h-20 w-full rounded-lg border border-input bg-background px-2.5 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+                value={scheduleForm.notes}
+                onChange={(event) => updateScheduleForm('notes', event.target.value)}
+              />
+              {scheduleErrors.notes && (
+                <p className="text-xs text-destructive">
+                  {scheduleErrors.notes[0]}
+                </p>
+              )}
+            </div>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setScheduleDialogOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" disabled={scheduleSubmitting}>
+                {scheduleSubmitting ? 'Saving...' : 'Schedule'}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
@@ -1016,9 +1346,15 @@ function ScheduleRow({
   return (
     <TableRow>
       <TableCell>
-        <div className="font-medium">{schedule.establishment?.name ?? 'Unknown'}</div>
+        <div className="font-medium">
+          {schedule.establishment?.name ??
+            schedule.request?.business_name ??
+            schedule.request?.applicant_name ??
+            'Unknown'}
+        </div>
         <div className="text-xs text-muted-foreground">
-          {schedule.establishment?.registration_number ?? 'No registration'}
+          {schedule.establishment?.registration_number ??
+            (schedule.request ? `Request ${schedule.request.request_number}` : 'No registration')}
         </div>
       </TableCell>
       <TableCell>{schedule.inspector?.name ?? 'Unassigned'}</TableCell>

@@ -409,7 +409,29 @@ export default function ClearancePage() {
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
-            <div className="overflow-hidden rounded-xl border border-border">
+            <style>{`
+              .claim-list-scroll {
+                scrollbar-width: thin;
+                scrollbar-color: hsl(var(--border)) transparent;
+              }
+              .claim-list-scroll::-webkit-scrollbar {
+                width: 6px;
+                height: 6px;
+              }
+              .claim-list-scroll::-webkit-scrollbar-track {
+                background: transparent;
+              }
+              .claim-list-scroll::-webkit-scrollbar-thumb {
+                background-color: hsl(var(--border));
+                border-radius: 9999px;
+              }
+              .claim-list-scroll::-webkit-scrollbar-button {
+                display: none;
+                width: 0;
+                height: 0;
+              }
+            `}</style>
+            <div className="overflow-hidden rounded-xl border border-border bg-popover">
               <div className="border-b border-border/60 px-3 py-2">
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -421,7 +443,10 @@ export default function ClearancePage() {
                   />
                 </div>
               </div>
-              <div className="max-h-72 space-y-2 overflow-y-auto rounded-b-xl p-3 pr-4">
+              {/* overflow-hidden + rounded-b-xl clips the scrollbar to the card's
+                  corner; claim-list-scroll forces a slim, theme-colored scrollbar
+                  so it never falls back to the browser's bulky native one */}
+              <div className="max-h-72 space-y-2 overflow-y-auto rounded-b-xl p-3 claim-list-scroll">
                 {fetchingUnclaimed ? (
                   <div className="space-y-2">
                     <Skeleton className="h-12 w-full" />
@@ -448,6 +473,7 @@ export default function ClearancePage() {
                       <Button
                         variant="outline"
                         size="sm"
+                        className="shrink-0"
                         onClick={() => handleClaim(establishment)}
                         disabled={claimingId === establishment.id}
                       >

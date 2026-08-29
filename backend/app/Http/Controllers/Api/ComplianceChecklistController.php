@@ -18,11 +18,11 @@ class ComplianceChecklistController extends BaseApiController
     {
         $inspection = InspectionSyncService::sync($inspectionSchedule);
 
-        $checklists = Checklist::query()
-            ->where('is_active', true)
-            ->with('items')
-            ->orderBy('category')
-            ->get();
+        $category = $inspectionSchedule->establishment?->category
+            ?? $inspectionSchedule->request?->establishment?->category
+            ?? Checklist::categoryForInspectionCategory($inspectionSchedule->request?->inspectionCategory?->slug);
+
+        $checklists = Checklist::forEstablishmentCategory($category)->get();
 
         $results = InspectionResult::query()
             ->where('inspection_id', $inspection->id)

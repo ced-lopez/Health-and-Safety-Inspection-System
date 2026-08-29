@@ -70,7 +70,6 @@ class InspectionTaxonomySeeder extends Seeder
         $typeIds = DB::table('application_types')->pluck('id', 'slug');
 
         $coreRequirements = [
-            ['documentType' => 'application_form', 'documentName' => 'Duly Accomplished Application Form', 'requiresExpirationCheck' => false],
             ['documentType' => 'government_id', 'documentName' => 'Valid Government-Issued ID', 'requiresExpirationCheck' => false],
             ['documentType' => 'cedula', 'documentName' => 'Community Tax Certificate (Cedula)', 'requiresExpirationCheck' => false],
             ['documentType' => 'proof_of_location', 'documentName' => 'Proof of Business/Residency Location', 'requiresExpirationCheck' => false],

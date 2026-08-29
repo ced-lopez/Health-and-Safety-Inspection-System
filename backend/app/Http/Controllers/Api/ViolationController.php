@@ -13,6 +13,7 @@ use App\Models\Violation;
 use App\Models\ViolationEvidence;
 use App\Notifications\Concerns\NotifiesRoles;
 use App\Notifications\ViolationFiled;
+use App\Notifications\ViolationNotice;
 use App\Services\AuditLogger;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -117,6 +118,8 @@ class ViolationController extends BaseApiController
 
         $violation = Violation::query()->create($payload);
 
+        $this->notifyViolationNotice($violation, $request);
+
         AuditLogger::log(
             $request->user(),
             'Violations',
@@ -168,6 +171,8 @@ class ViolationController extends BaseApiController
         $oldStatus = $violation->status;
 
         $violation->update($payload);
+
+        $this->notifyViolationNotice($violation, $request);
 
         AuditLogger::log(
             $request->user(),
@@ -255,6 +260,28 @@ class ViolationController extends BaseApiController
         $payload['establishment_id'] = $inspection->establishment_id;
 
         return $payload;
+    }
+
+    private function notifyViolationNotice(Violation $violation, Request $request): void
+    {
+        $inspectionRequest = $violation->inspection?->inspectionRequest;
+
+        if (! $inspectionRequest) {
+            return;
+        }
+
+        if ($inspectionRequest->status === 'inspection_completed') {
+            $inspectionRequest->update(['status' => 'violation_notice_issued']);
+        }
+
+        $deadline = optional($violation->correction_deadline)->format('M d, Y') ?? '7 days from notice';
+
+        $inspectionRequest->resident?->notify(new ViolationNotice(
+            $inspectionRequest->request_number,
+            $violation->title,
+            $deadline,
+            $inspectionRequest->applicant_name,
+        ));
     }
 
     private function loadViolation(Violation $violation): Violation

@@ -5,9 +5,12 @@ namespace App\Http\Controllers\Api;
 use App\Http\Requests\InspectionSchedule\StoreInspectionScheduleRequest;
 use App\Http\Requests\InspectionSchedule\UpdateInspectionScheduleRequest;
 use App\Http\Resources\EstablishmentResource;
+use App\Http\Resources\InspectionRequestResource;
 use App\Http\Resources\InspectionScheduleResource;
 use App\Http\Resources\UserResource;
 use App\Models\Establishment;
+use App\Models\InspectionAssignment;
+use App\Models\InspectionRequest;
 use App\Models\InspectionSchedule;
 use App\Models\User;
 use App\Notifications\InspectionRescheduled;
@@ -24,7 +27,7 @@ class InspectionScheduleController extends BaseApiController
     public function index(Request $request): JsonResponse
     {
         $query = InspectionSchedule::query()
-            ->with(['establishment', 'inspector']);
+            ->with(['establishment', 'inspector', 'request']);
 
         if ($request->filled('status') && $request->input('status') !== 'all') {
             $query->where('status', $request->input('status'));
@@ -86,8 +89,79 @@ class InspectionScheduleController extends BaseApiController
 
     public function store(StoreInspectionScheduleRequest $request): JsonResponse
     {
-        $payload = $request->validated();
-        $payload['scheduled_by'] = $request->user()->id;
+        [$schedule, $wasScheduled] = $this->persistSchedule($request, $request->validated());
+
+        return $this->success(
+            new InspectionScheduleResource($schedule->load([
+                'establishment', 'inspector.role', 'scheduler.role', 'request.inspectionCategory', 'request.resident',
+            ])),
+            $wasScheduled ? 'Inspection rescheduled successfully' : 'Inspection scheduled successfully',
+            $wasScheduled ? 200 : 201
+        );
+    }
+
+    public function confirmPreferred(Request $request, InspectionRequest $inspectionRequest): JsonResponse
+    {
+        $validated = $request->validate([
+            'inspector_id' => ['required', 'exists:users,id'],
+            'scheduled_at' => ['nullable', 'date'],
+            'scheduled_date' => ['nullable', 'date'],
+            'scheduled_time' => ['nullable', 'date_format:H:i'],
+        ]);
+
+        $payload = [
+            'establishment_id' => $inspectionRequest->establishment_id,
+            'inspector_id' => (int) $validated['inspector_id'],
+            'inspection_request_id' => $inspectionRequest->id,
+            'status' => 'scheduled',
+            'schedule_type' => 'initial',
+        ];
+
+        if (! empty($validated['scheduled_at'])) {
+            $payload['scheduled_at'] = $validated['scheduled_at'];
+        } elseif (! empty($validated['scheduled_date'])) {
+            $payload['scheduled_date'] = $validated['scheduled_date'];
+            $payload['scheduled_time'] = $validated['scheduled_time'] ?? null;
+        } elseif ($inspectionRequest->preferred_schedule_at) {
+            $payload['scheduled_at'] = $inspectionRequest->preferred_schedule_at;
+        } else {
+            return $this->error('Provide a date and time, or ask the resident to propose a preferred schedule first.', 422);
+        }
+
+        [$schedule] = $this->persistSchedule($request, $payload);
+
+        if ($inspectionRequest->preferred_schedule_at) {
+            $inspectionRequest->update(['preferred_schedule_at' => null]);
+        }
+
+        AuditLogger::log(
+            $request->user(),
+            'Inspection Requests',
+            'Schedule Confirmed',
+            "Confirmed schedule for request {$inspectionRequest->request_number}",
+            $inspectionRequest,
+            $request,
+            newValues: [
+                'inspector_id' => (int) $validated['inspector_id'],
+                'scheduled_at' => $schedule->scheduled_at?->toIso8601String(),
+            ],
+            event: 'inspection_request.schedule_confirmed',
+        );
+
+        return $this->success([
+            'schedule' => new InspectionScheduleResource($schedule->load([
+                'establishment', 'inspector.role', 'scheduler.role', 'request.inspectionCategory', 'request.resident',
+            ])),
+            'request' => new InspectionRequestResource($inspectionRequest->fresh()->load([
+                'resident.role', 'inspectionCategory', 'applicationType', 'establishment',
+                'inspectionAssignment.inspector.role',
+            ])),
+        ], 'Preferred schedule confirmed successfully', 201);
+    }
+
+    private function persistSchedule(Request $request, array $payload): array
+    {
+        $payload['scheduled_by'] = $payload['scheduled_by'] ?? $request->user()->id;
         $payload = $this->normalizeScheduledAt($payload);
         $payload['schedule_type'] = $payload['schedule_type'] ?? 'initial';
 
@@ -103,6 +177,7 @@ class InspectionScheduleController extends BaseApiController
                 'server_version' => $existing->server_version + 1,
             ]));
             InspectionSyncService::sync($existing);
+            $this->ensureAssignment($request, $existing);
             $this->notifyScheduleChange($existing, $wasScheduled);
 
             $this->logScheduleEvent(
@@ -112,16 +187,12 @@ class InspectionScheduleController extends BaseApiController
                 ($wasScheduled ? 'Rescheduled' : 'Scheduled').' inspection for '.($existing->establishment?->name ?? 'establishment'),
             );
 
-            return $this->success(
-                new InspectionScheduleResource($existing->load([
-                    'establishment', 'inspector.role', 'scheduler.role', 'request.inspectionCategory', 'request.resident',
-                ])),
-                $wasScheduled ? 'Inspection rescheduled successfully' : 'Inspection scheduled successfully'
-            );
+            return [$existing, $wasScheduled];
         }
 
         $schedule = InspectionSchedule::query()->create($payload);
         InspectionSyncService::sync($schedule);
+        $this->ensureAssignment($request, $schedule);
         $this->notifyScheduleChange($schedule, false);
 
         $this->logScheduleEvent(
@@ -131,13 +202,7 @@ class InspectionScheduleController extends BaseApiController
             'Scheduled inspection for '.($schedule->establishment?->name ?? 'establishment'),
         );
 
-        return $this->success(
-            new InspectionScheduleResource($schedule->load([
-                'establishment', 'inspector.role', 'scheduler.role', 'request.inspectionCategory', 'request.resident',
-            ])),
-            'Inspection scheduled successfully',
-            201
-        );
+        return [$schedule, false];
     }
 
     public function show(InspectionSchedule $inspectionSchedule): JsonResponse
@@ -159,6 +224,8 @@ class InspectionScheduleController extends BaseApiController
             'server_version' => $inspectionSchedule->server_version + 1,
         ]));
         InspectionSyncService::sync($inspectionSchedule);
+
+        $this->ensureAssignment($request, $inspectionSchedule);
 
         if ($inspectionSchedule->inspection_request_id) {
             $this->notifyScheduleChange($inspectionSchedule->load('request', 'inspector'), $wasScheduled);
@@ -308,6 +375,7 @@ class InspectionScheduleController extends BaseApiController
             'establishment', 'inspector.role', 'scheduler.role', 'request.inspectionCategory', 'request.resident',
         ]);
 
+        $this->ensureAssignment($request, $inspectionSchedule);
         $this->notifyScheduleChange($inspectionSchedule, $wasScheduled);
 
         $this->logScheduleEvent(
@@ -357,6 +425,40 @@ class InspectionScheduleController extends BaseApiController
             'to' => $to->toDateString(),
             'bookings' => $bookings,
         ], 'Inspector availability retrieved successfully');
+    }
+
+    private function ensureAssignment(Request $request, InspectionSchedule $schedule): void
+    {
+        if (! $schedule->inspection_request_id || ! $schedule->inspector_id) {
+            return;
+        }
+
+        $inspectionRequest = InspectionRequest::query()->find($schedule->inspection_request_id);
+
+        if (! $inspectionRequest) {
+            return;
+        }
+
+        $active = InspectionAssignment::query()
+            ->where('inspection_request_id', $inspectionRequest->id)
+            ->whereIn('status', ['assigned', 'downloaded', 'in_progress'])
+            ->first();
+
+        if ($active) {
+            return;
+        }
+
+        InspectionAssignment::query()->create([
+            'inspection_request_id' => $inspectionRequest->id,
+            'inspector_id' => $schedule->inspector_id,
+            'assigned_by' => $schedule->scheduled_by ?? $request->user()->id,
+            'status' => 'assigned',
+            'assigned_at' => now(),
+        ]);
+
+        if ($inspectionRequest->status === 'approved_for_inspection') {
+            $inspectionRequest->update(['status' => 'assigned']);
+        }
     }
 
     private function normalizeScheduledAt(array $payload): array

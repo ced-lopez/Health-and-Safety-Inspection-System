@@ -1,0 +1,27 @@
+# ---- Local / private ----
+
+# JetBrains IDE workspace (local only)
+.idea/
+
+# opencode / agent scratch files
+.agents/
+
+# Editor / OS
+.vscode/
+Thumbs.db
+.DS_Store
+
+# Private requirement prompts (not for version control)
+UPDATED PROMPT.txt
+*.prompt.txt
+
+# Local environment files (keep real secrets out of git)
+.env
+.env.*
+!.env.example
+
+# ---- Internal documentation (kept locally, not versioned) ----
+docs/
+
+# Misc
+*.local

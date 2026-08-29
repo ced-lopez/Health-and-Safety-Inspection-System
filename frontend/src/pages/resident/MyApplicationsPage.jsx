@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Download, Eye, FileSearch, FileText, Maximize2, Minimize2, Search } from 'lucide-react'
+import { CalendarClock, Download, Eye, FileSearch, FileText, Loader2, Maximize2, Minimize2, Search, Trash2 } from 'lucide-react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { toast } from 'sonner'
 
@@ -8,9 +8,10 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { fetchInspectionRequests, fetchInspectionRequest, fetchRequestDocuments, fetchRequestDocumentFile, uploadRequestDocument } from '@/services/inspectionRequestService'
+import { fetchInspectionRequests, fetchInspectionRequest, fetchRequestDocuments, fetchRequestDocumentFile, uploadRequestDocument, setPreferredSchedule, clearPreferredSchedule } from '@/services/inspectionRequestService'
 
 const statusLabels = {
   draft: 'Draft',
@@ -69,6 +70,24 @@ function subPathBadge(req) {
   )
 }
 
+const terminalStatuses = ['inspection_completed', 'violation_notice_issued', 'follow_up_requested', 'clearance_approved', 'rejected', 'cancelled']
+
+function formatSchedule(value) {
+  if (!value) return 'N/A'
+  return new Date(value).toLocaleString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+}
+
+function toDateInput(value) {
+  if (!value) return ''
+  return new Date(value).toLocaleDateString('en-CA')
+}
+
+function toTimeInput(value) {
+  if (!value) return ''
+  const d = new Date(value)
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
 export default function MyApplicationsPage() {
   const [requests, setRequests] = useState([])
   const [meta, setMeta] = useState({ current_page: 1, last_page: 1, total: 0 })
@@ -85,6 +104,10 @@ export default function MyApplicationsPage() {
   const [previewName, setPreviewName] = useState('')
   const [previewLoading, setPreviewLoading] = useState(false)
   const [previewMaximized, setPreviewMaximized] = useState(false)
+  const [scheduleDate, setScheduleDate] = useState('')
+  const [scheduleTime, setScheduleTime] = useState('')
+  const [scheduleSubmitting, setScheduleSubmitting] = useState(false)
+  const [scheduleClearing, setScheduleClearing] = useState(false)
 
   const queryParams = useMemo(() => ({
     search: filters.search || undefined,
@@ -125,10 +148,51 @@ export default function MyApplicationsPage() {
         fetchInspectionRequest(request.id),
         fetchRequestDocuments(request.id),
       ])
-      setSelectedRequest(detailRes.data ?? detailRes)
+      const detail = detailRes.data ?? detailRes
+      setSelectedRequest(detail)
+      setScheduleDate(toDateInput(detail.preferred_schedule_at))
+      setScheduleTime(toTimeInput(detail.preferred_schedule_at))
       setDocuments(docRes.data?.documents ?? docRes ?? [])
     } catch { toast.error('Unable to load application details') } finally {
       setDetailLoading(false)
+    }
+  }
+
+  async function handleProposeSchedule() {
+    if (!selectedRequest) return
+    const date = scheduleDate
+    const time = scheduleTime
+    if (!date || !time) {
+      toast.error('Pick a preferred date and time first')
+      return
+    }
+    setScheduleSubmitting(true)
+    try {
+      const res = await setPreferredSchedule(selectedRequest.id, { preferred_schedule_at: `${date} ${time}` })
+      const updated = res.data ?? res
+      setSelectedRequest((prev) => ({ ...prev, ...(updated || {}) }))
+      toast.success('Preferred schedule submitted for confirmation')
+    } catch (err) {
+      toast.error(err.response?.data?.message ?? 'Unable to propose a schedule')
+    } finally {
+      setScheduleSubmitting(false)
+    }
+  }
+
+  async function handleClearSchedule() {
+    if (!selectedRequest) return
+    setScheduleClearing(true)
+    try {
+      const res = await clearPreferredSchedule(selectedRequest.id)
+      const updated = res.data ?? res
+      setSelectedRequest((prev) => ({ ...prev, ...(updated || {}) }))
+      setScheduleDate('')
+      setScheduleTime('')
+      toast.success('Preferred schedule removed')
+    } catch (err) {
+      toast.error(err.response?.data?.message ?? 'Unable to remove the schedule')
+    } finally {
+      setScheduleClearing(false)
     }
   }
 
@@ -262,9 +326,78 @@ export default function MyApplicationsPage() {
 
               <div className="border-t pt-4">
                 <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <h4 className="text-sm font-semibold">Preferred Inspection Schedule</h4>
+                    <CalendarClock className="size-4 text-muted-foreground" />
+                  </div>
+                  {(selectedRequest.schedules?.length ?? 0) === 0 && selectedRequest.preferred_schedule_at && !terminalStatuses.includes(selectedRequest.status) && (
+                    <Button variant="ghost" size="sm" className="text-destructive" onClick={handleClearSchedule} disabled={scheduleClearing}>
+                      <Trash2 className="size-4" /> {scheduleClearing ? 'Removing...' : 'Remove proposal'}
+                    </Button>
+                  )}
+                </div>
+                {(selectedRequest.schedules?.length ?? 0) > 0 ? (
+                  <p className="text-sm">
+                    <Badge variant="default">Confirmed</Badge>{' '}
+                    <span className="font-medium">{formatSchedule(selectedRequest.schedules[0].scheduled_at)}</span>{' '}
+                    {selectedRequest.schedules[0].inspector?.name ? <span className="text-muted-foreground">· {selectedRequest.schedules[0].inspector.name}</span> : null}
+                  </p>
+                ) : selectedRequest.preferred_schedule_at && !terminalStatuses.includes(selectedRequest.status) ? (
+                  <div className="space-y-3">
+                    <p className="text-sm">
+                      <Badge variant="secondary">Proposed</Badge>{' '}
+                      <span className="font-medium">{formatSchedule(selectedRequest.preferred_schedule_at)}</span>{' '}
+                      <span className="text-muted-foreground">· awaiting confirmation by barangay staff</span>
+                    </p>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <div className="space-y-1">
+                        <Label className="text-xs text-muted-foreground">Preferred date</Label>
+                        <Input type="date" value={scheduleDate} onChange={(e) => setScheduleDate(e.target.value)} className="mt-1" />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs text-muted-foreground">Preferred time</Label>
+                        <Input type="time" value={scheduleTime} onChange={(e) => setScheduleTime(e.target.value)} className="mt-1" />
+                      </div>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button size="sm" onClick={handleProposeSchedule} disabled={scheduleSubmitting}>
+                        {scheduleSubmitting ? <Loader2 className="size-4 animate-spin" /> : <CalendarClock className="size-4" />}
+                        Update proposal
+                      </Button>
+                    </div>
+                  </div>
+                ) : !terminalStatuses.includes(selectedRequest.status) ? (
+                  <div className="space-y-3">
+                    <p className="text-sm text-muted-foreground">
+                      Suggest a date and time that works for you. Barangay staff will confirm the official inspection schedule.
+                    </p>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <div className="space-y-1">
+                        <Label className="text-xs text-muted-foreground">Preferred date</Label>
+                        <Input type="date" value={scheduleDate} onChange={(e) => setScheduleDate(e.target.value)} className="mt-1" />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs text-muted-foreground">Preferred time</Label>
+                        <Input type="time" value={scheduleTime} onChange={(e) => setScheduleTime(e.target.value)} className="mt-1" />
+                      </div>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button size="sm" onClick={handleProposeSchedule} disabled={scheduleSubmitting}>
+                        {scheduleSubmitting ? <Loader2 className="size-4 animate-spin" /> : <CalendarClock className="size-4" />}
+                        Propose schedule
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground">Schedule changes are closed for this application.</p>
+                )}
+              </div>
+
+              <div className="border-t pt-4">
+                <div className="flex items-center justify-between mb-3">
                   <h4 className="text-sm font-semibold">Uploaded Documents</h4>
                   <label className="cursor-pointer text-xs text-primary hover:underline">
-                    <input type="file" multiple accept="image/*,.pdf" className="hidden" onChange={handleUploadDocument} disabled={uploadingDoc} />
+                    <input type="file" multiple accept=".jpg,.jpeg,.png,.pdf,.webp" className="hidden" onChange={handleUploadDocument} disabled={uploadingDoc} />
                     + Add Document
                   </label>
                 </div>
@@ -276,7 +409,7 @@ export default function MyApplicationsPage() {
                       <div key={doc.id} className="flex items-center justify-between rounded-lg border border-border p-2.5">
                         <div className="flex items-center gap-2 min-w-0">
                           <FileText className="size-4 shrink-0 text-muted-foreground" />
-                          <span className="text-sm truncate">{doc.file_name ?? doc.filename ?? 'Document'}</span>
+                          <span className="text-sm truncate">{doc.original_name ?? doc.file_name ?? doc.filename ?? 'Document'}</span>
                         </div>
                         <div className="flex items-center gap-2 shrink-0">
                           <Badge variant="outline" className="shrink-0">{doc.status ?? 'pending'}</Badge>
