@@ -38,6 +38,7 @@ use Illuminate\Support\Facades\Route;
 
 Route::prefix('v1')->group(function () {
     Route::get('/health', [HealthController::class, 'index']);
+    Route::get('/public/stats', [\App\Http\Controllers\Api\PublicStatsController::class, 'index']);
     Route::get('/verify/{code}', [CertificationController::class, 'verify']);
 
     Route::prefix('auth')->group(function () {

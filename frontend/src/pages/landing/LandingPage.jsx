@@ -29,6 +29,7 @@ import { useAuth } from "@/context/AuthContext";
 import { APP_NAME, APP_SUBTITLE } from "@/utils/constants";
 import { getHomePath } from "@/utils/permissions";
 import { Button } from "@/components/ui/button";
+import api from "@/services/api";
 import {
   Card,
   CardContent,
@@ -99,15 +100,13 @@ const requirements = [
   "Previous clearance for renewals",
 ];
 
-// ---------------------------------------------------------------------------
-// New, additive content for the redesigned sections. Placeholder figures —
-// swap in real numbers whenever you have them.
-// ---------------------------------------------------------------------------
-const stats = [
-  { icon: Users, value: "500+", label: "Residents Registered" },
-  { icon: ClipboardCheck, value: "1,200+", label: "Inspections Completed" },
-  { icon: QrCode, value: "950+", label: "QR Clearances Issued" },
-  { icon: Clock, value: "24/7", label: "Online Availability" },
+// Live stats — fetched from /v1/public/stats (public, no auth)
+// Falls back to 0 for fresh deploy after sample data removal
+const statsFallback = [
+  { icon: Users, key: "residents_registered", label: "Residents Registered" },
+  { icon: ClipboardCheck, key: "inspections_completed", label: "Inspections Completed" },
+  { icon: QrCode, key: "clearances_issued", label: "QR Clearances Issued" },
+  { icon: Clock, key: "availability", label: "Online Availability", staticValue: "24/7" },
 ];
 
 const features = [
@@ -220,6 +219,19 @@ function Reveal({ children, className = "" }) {
 export default function LandingPage() {
   const { isAuthenticated, loading, user } = useAuth();
   const [theme, setTheme] = useTheme();
+  const [liveStats, setLiveStats] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    api.get("/v1/public/stats")
+      .then((res) => {
+        if (!cancelled) setLiveStats(res.data?.data ?? res.data);
+      })
+      .catch(() => {
+        if (!cancelled) setLiveStats({});
+      });
+    return () => { cancelled = true; };
+  }, []);
 
   if (loading) {
     return (
@@ -380,7 +392,7 @@ export default function LandingPage() {
                   <ClipboardCheck className="size-4" />
                 </div>
                 <div className="leading-tight">
-                  <p className="text-sm font-bold">1,200+</p>
+                  <p className="text-sm font-bold">{liveStats ? `${liveStats.inspections_completed ?? 0}` : "—"}</p>
                   <p className="text-[11px] text-muted-foreground">
                     Inspections done
                   </p>
@@ -518,9 +530,11 @@ export default function LandingPage() {
         {/* ------------------------------------------------------------- */}
         <section className="mx-auto w-full max-w-[1800px] px-6 sm:px-8 lg:px-12 xl:px-20 py-16">
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            {stats.map((stat, idx) => {
+            {statsFallback.map((stat, idx) => {
               const Icon = stat.icon;
               const isAccent = idx % 2 === 0;
+              const value = stat.staticValue ?? (liveStats ? (liveStats[stat.key] ?? 0) : "—");
+              const display = typeof value === "number" ? value.toLocaleString() : value;
               return (
                 <Reveal key={stat.label}>
                   <Card className="h-full border-border/70 text-center transition-all duration-300 hover:-translate-y-1 hover:shadow-lg">
@@ -535,7 +549,7 @@ export default function LandingPage() {
                         <Icon className="size-5" />
                       </div>
                       <p className="text-2xl font-extrabold tracking-tight">
-                        {stat.value}
+                        {display}
                       </p>
                       <p className="text-sm text-muted-foreground">
                         {stat.label}
