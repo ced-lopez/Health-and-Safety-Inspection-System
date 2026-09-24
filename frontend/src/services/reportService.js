@@ -30,11 +30,11 @@ export async function exportReport(type, params = {}, format = 'csv') {
     params: { ...params, format },
     responseType: 'blob',
   })
-  const disposition = res.headers['content-disposition']
-  let filename = `${type}-${format}.${format === 'excel' ? 'xlsx' : format}`
+  const disposition = res.headers['content-disposition'] || res.headers['Content-Disposition']
+  let filename = `${type}.${format === 'excel' ? 'xlsx' : format}`
   if (disposition) {
     const match = disposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/)
-    if (match?.[1]) filename = match[1].replace(/['"]/g, '')
+    if (match?.[1]) filename = match[1].replace(/['"]/g, '').trim()
   }
   const blob = new Blob([res.data], { type: res.headers['content-type'] })
   const url = URL.createObjectURL(blob)
