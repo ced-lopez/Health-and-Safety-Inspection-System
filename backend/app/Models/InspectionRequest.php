@@ -78,11 +78,21 @@ class InspectionRequest extends Model
 
     public function inspectionAssignment(): HasOne
     {
-        return $this->hasOne(InspectionAssignment::class);
+        return $this->hasOne(InspectionAssignment::class)->latestOfMany();
     }
 
     public function schedules(): HasMany
     {
         return $this->hasMany(InspectionSchedule::class, 'inspection_request_id');
+    }
+
+    public function payments(): HasMany
+    {
+        return $this->hasMany(Payment::class);
+    }
+
+    public function inspections(): HasMany
+    {
+        return $this->hasMany(Inspection::class);
     }
 }

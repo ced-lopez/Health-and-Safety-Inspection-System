@@ -54,8 +54,4 @@ class InspectionAssignment extends Model
         return $this->hasOne(InspectionSchedule::class, 'inspection_assignment_id')->latestOfMany();
     }
 
-    public function mobileSyncRecords(): HasMany
-    {
-        return $this->hasMany(MobileSyncRecord::class);
-    }
 }

@@ -3,6 +3,7 @@
 use App\Http\Controllers\Api\Admin\AdminUserController;
 use App\Http\Controllers\Api\AuditLogController;
 use App\Http\Controllers\Api\Auth\AuthController;
+use App\Http\Controllers\Api\Auth\PasswordResetController;
 use App\Http\Controllers\Api\CertificationController;
 use App\Http\Controllers\Api\ChecklistTemplateController;
 use App\Http\Controllers\Api\ComplianceChecklistController;
@@ -20,6 +21,7 @@ use App\Http\Controllers\Api\MyClearanceController;
 use App\Http\Controllers\Api\MyEstablishmentController;
 use App\Http\Controllers\Api\NotificationController;
 use App\Http\Controllers\Api\OcrResultController;
+use App\Http\Controllers\Api\PaymentController;
 use App\Http\Controllers\Api\ReportController;
 use App\Http\Controllers\Api\ViolationController;
 use Illuminate\Support\Facades\Route;
@@ -43,8 +45,10 @@ Route::prefix('v1')->group(function () {
         Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:5,1');
         Route::post('/verify', [AuthController::class, 'verify'])->middleware('throttle:10,1');
         Route::post('/resend-verification', [AuthController::class, 'resendVerification'])->middleware('throttle:3,1');
+        Route::post('/forgot-password', [PasswordResetController::class, 'sendResetLink'])->middleware('throttle:6,1');
+        Route::post('/reset-password', [PasswordResetController::class, 'reset'])->middleware('throttle:6,1');
 
-        Route::middleware('auth:sanctum')->group(function () {
+    Route::middleware(['idle', 'auth:sanctum'])->group(function () {
             Route::get('/me', [AuthController::class, 'me']);
             Route::post('/logout', [AuthController::class, 'logout']);
             Route::put('/profile', [AuthController::class, 'updateProfile']);
@@ -71,6 +75,7 @@ Route::prefix('v1')->group(function () {
         Route::prefix('my')->group(function () {
             Route::get('/clearances', [MyClearanceController::class, 'index']);
             Route::get('/clearances/{clearance}/pdf', [MyClearanceController::class, 'pdf']);
+            Route::get('/clearances/{clearance}/qr-card', [MyClearanceController::class, 'qrCard']);
             Route::get('/establishments', [MyEstablishmentController::class, 'mine']);
             Route::get('/establishments/unclaimed', [MyEstablishmentController::class, 'unclaimed']);
             Route::post('/establishments/{establishment}/claim', [MyEstablishmentController::class, 'claim']);
@@ -99,6 +104,7 @@ Route::prefix('v1')->group(function () {
             Route::get('/schedules/{inspectionSchedule}/checklist', [ComplianceChecklistController::class, 'show']);
             Route::post('/schedules/{inspectionSchedule}/checklist', [ComplianceChecklistController::class, 'store']);
             Route::get('/schedules/{inspectionSchedule}/report', [InspectionReportController::class, 'show']);
+            Route::get('/schedules/{inspectionSchedule}/report/pdf', [InspectionReportController::class, 'pdf']);
             Route::put('/schedules/{inspectionSchedule}/report', [InspectionReportController::class, 'update']);
         });
 
@@ -114,6 +120,7 @@ Route::prefix('v1')->group(function () {
             Route::delete('/{violation}', [ViolationController::class, 'destroy'])
                 ->middleware('role:administrator,barangay_staff');
             Route::post('/{violation}/evidence', [ViolationController::class, 'storeEvidence']);
+            Route::get('/{violation}/pdf', [ViolationController::class, 'pdf']);
         });
 
         Route::prefix('certifications')->middleware('role:administrator,barangay_staff')->group(function () {
@@ -127,6 +134,13 @@ Route::prefix('v1')->group(function () {
             Route::put('/{kind}/{id}', [CertificationController::class, 'update']);
             Route::delete('/{kind}/{id}', [CertificationController::class, 'destroy'])
                 ->middleware('role:administrator');
+        });
+
+        Route::prefix('payments')->group(function () {
+            Route::get('/', [PaymentController::class, 'globalIndex']);
+            Route::patch('/{payment}/confirm', [PaymentController::class, 'confirm'])
+                ->middleware('role:administrator,barangay_staff');
+            Route::get('/{payment}/receipt-global', [PaymentController::class, 'receiptGlobal']);
         });
 
         Route::prefix('inspection-requests')->group(function () {
@@ -147,6 +161,11 @@ Route::prefix('v1')->group(function () {
             Route::delete('/{inspection_request}/preferred-schedule', [InspectionRequestController::class, 'clearPreferredSchedule']);
             Route::post('/{inspection_request}/confirm-schedule', [InspectionScheduleController::class, 'confirmPreferred'])
                 ->middleware('role:administrator,barangay_staff');
+
+            Route::get('/{inspection_request}/payments', [PaymentController::class, 'index']);
+            Route::post('/{inspection_request}/payments', [PaymentController::class, 'store'])
+                ->middleware('role:administrator,barangay_staff');
+            Route::get('/{inspection_request}/payments/{payment}/receipt', [PaymentController::class, 'receipt']);
 
             Route::get('/{inspection_request}/documents', [DocumentController::class, 'index']);
             Route::post('/{inspection_request}/documents', [DocumentController::class, 'upload']);

@@ -35,7 +35,6 @@ class CorsTest extends TestCase
         ])->postJson('/api/v1/auth/login', [
             'email' => 'cors@example.com',
             'password' => 'password123',
-            'portal' => 'staff',
         ]);
 
         $response->assertStatus(200)

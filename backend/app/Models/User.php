@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Notifications\ResetPasswordLink;
 use Database\Factories\UserFactory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -72,6 +73,11 @@ class User extends Authenticatable
         return in_array($roleRelation->slug, $roles, true);
     }
 
+    public function sendPasswordResetNotification($token): void
+    {
+        $this->notify(new ResetPasswordLink($token));
+    }
+
     public function inspectionSchedulesAsInspector(): HasMany
     {
         return $this->hasMany(InspectionSchedule::class, 'inspector_id');
@@ -112,8 +118,8 @@ class User extends Authenticatable
         return $this->hasMany(InspectionRequest::class, 'reviewed_by');
     }
 
-    public function mobileSyncRecords(): HasMany
+    public function confirmedPayments(): HasMany
     {
-        return $this->hasMany(MobileSyncRecord::class, 'inspector_id');
+        return $this->hasMany(Payment::class, 'confirmed_by');
     }
 }

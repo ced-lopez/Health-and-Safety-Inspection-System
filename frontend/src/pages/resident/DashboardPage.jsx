@@ -220,7 +220,8 @@ export default function ResidentDashboardPage() {
           <h2 className="text-2xl font-semibold tracking-tight">Resident Dashboard</h2>
           {isFetching && !loading && <span className="text-xs text-muted-foreground">Refreshing...</span>}
         </div>
-        <p className="text-sm text-muted-foreground">Track your applications, clearances, and inspection updates</p>
+        <p className="text-sm text-muted-foreground">Health and Safety Inspection System · Barangay 178, North Caloocan City · Barangay-Level Administrative System</p>
+        <p className="text-xs text-muted-foreground/80">Track your applications, clearances, and inspection updates — scoped to Barangay 178 only</p>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -307,8 +308,10 @@ export default function ResidentDashboardPage() {
                           <p className="text-xs text-muted-foreground">Expiration</p>
                           <p className="text-sm">{clearance.expiration_date}</p>
                         </div>
+                        <p className="text-[0.65rem] text-muted-foreground">Issued through the Barangay 178 Health &amp; Safety Inspection System · Barangay 178, North Caloocan City</p>
                       </div>
                     </div>
+                    <p className="text-center text-[0.65rem] text-muted-foreground">Barangay-Level Administrative System — scoped to Barangay 178 only</p>
                   </div>
                 ))}
               </div>

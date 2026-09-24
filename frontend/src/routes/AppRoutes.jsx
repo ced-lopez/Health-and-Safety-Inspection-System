@@ -3,9 +3,10 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { useAuth } from "@/context/AuthContext";
 import LoginPage from "@/pages/auth/LoginPage";
+import ForgotPasswordPage from "@/pages/auth/ForgotPasswordPage";
 import RegisterPage from "@/pages/auth/RegisterPage";
+import ResetPasswordPage from "@/pages/auth/ResetPasswordPage";
 import VerifyPage from "@/pages/auth/VerifyPage";
-import ResidentLoginPage from "@/pages/resident/LoginPage";
 import LandingPage from "@/pages/landing/LandingPage";
 import VerifyCodePage from "@/pages/public/VerifyCodePage";
 import CertificationsPage from "@/pages/certifications/CertificationsPage";
@@ -17,6 +18,7 @@ import EstablishmentProfilePage from "@/pages/establishments/EstablishmentProfil
 import InspectionsPage from "@/pages/inspections/InspectionsPage";
 import ViolationsPage from "@/pages/violations/ViolationsPage";
 import InspectionRequestsPage from "@/pages/inspection-requests/InspectionRequestsPage";
+import PaymentsPage from "@/pages/payments/PaymentsPage";
 import CalendarPage from "@/pages/scheduling/CalendarPage";
 import ChecklistsPage from "@/pages/checklists/ChecklistsPage";
 import DocumentsPage from "@/pages/documents/DocumentsPage";
@@ -54,18 +56,32 @@ export function AppRoutes() {
         path="/login"
         element={
           <GuestRoute>
-            <ResidentLoginPage />
+            <LoginPage />
+          </GuestRoute>
+        }
+      />
+
+      <Route
+        path="/forgot-password"
+        element={
+          <GuestRoute>
+            <ForgotPasswordPage />
+          </GuestRoute>
+        }
+      />
+
+      <Route
+        path="/reset-password"
+        element={
+          <GuestRoute>
+            <ResetPasswordPage />
           </GuestRoute>
         }
       />
 
       <Route
         path="/admin/login"
-        element={
-          <GuestRoute>
-            <LoginPage />
-          </GuestRoute>
-        }
+        element={<Navigate to="/login" replace />}
       />
 
       <Route
@@ -109,6 +125,7 @@ export function AppRoutes() {
         <Route path="users" element={<ProtectedRoute module="users"><UsersPage /></ProtectedRoute>} />
 
         <Route path="inspection-requests" element={<ProtectedRoute module="inspection-requests"><InspectionRequestsPage /></ProtectedRoute>} />
+        <Route path="payments" element={<ProtectedRoute module="payments"><PaymentsPage /></ProtectedRoute>} />
         <Route path="checklists" element={<ProtectedRoute module="checklists"><ChecklistsPage /></ProtectedRoute>} />
         <Route path="documents" element={<ProtectedRoute module="documents"><DocumentsPage /></ProtectedRoute>} />
         <Route path="ocr-results" element={<ProtectedRoute module="ocr-results"><OcrResultsPage /></ProtectedRoute>} />

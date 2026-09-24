@@ -8,6 +8,7 @@ use App\Models\Establishment;
 use App\Models\Inspection;
 use App\Models\InspectionCategory;
 use App\Models\InspectionRequest;
+use App\Models\Payment;
 use App\Models\Role;
 use App\Models\User;
 use App\Models\Violation;
@@ -119,6 +120,7 @@ class InspectionRequestStatusTransitionTest extends TestCase
     {
         $inspectionRequest = $this->makeCompletedRequest();
         $inspection = Inspection::where('inspection_request_id', $inspectionRequest->id)->firstOrFail();
+        $this->makePaidClearancePayment($inspectionRequest, $inspection);
 
         $response = $this->actingAs($this->barangayStaff, 'sanctum')
             ->postJson('/api/v1/certifications', [
@@ -149,6 +151,7 @@ class InspectionRequestStatusTransitionTest extends TestCase
     {
         $inspectionRequest = $this->makeCompletedRequest();
         $inspection = Inspection::where('inspection_request_id', $inspectionRequest->id)->firstOrFail();
+        $this->makePaidClearancePayment($inspectionRequest, $inspection);
 
         $this->actingAs($this->barangayStaff, 'sanctum')
             ->postJson('/api/v1/certifications', [
@@ -173,6 +176,7 @@ class InspectionRequestStatusTransitionTest extends TestCase
     {
         $inspectionRequest = $this->makeCompletedRequest();
         $inspection = Inspection::where('inspection_request_id', $inspectionRequest->id)->firstOrFail();
+        $this->makePaidClearancePayment($inspectionRequest, $inspection);
 
         $clearance = Clearance::query()->create([
             'establishment_id' => $this->establishment->id,
@@ -267,6 +271,21 @@ class InspectionRequestStatusTransitionTest extends TestCase
             'email' => $email,
             'password' => bcrypt('password123'),
             'is_active' => true,
+        ]);
+    }
+
+    private function makePaidClearancePayment(InspectionRequest $request, Inspection $inspection): Payment
+    {
+        return Payment::query()->create([
+            'inspection_request_id' => $request->id,
+            'inspection_id' => $inspection->id,
+            'type' => 'clearance_fee',
+            'amount' => 150,
+            'method' => 'manual',
+            'status' => 'paid',
+            'reference_number' => 'OR-TEST-'.random_int(1000, 9999),
+            'paid_at' => now(),
+            'confirmed_by' => $this->barangayStaff->id,
         ]);
     }
 }

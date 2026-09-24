@@ -4,7 +4,7 @@ A comprehensive **Health & Safety Inspection System** developed for **Barangay 1
 
 The system digitizes the barangay's health and safety inspection process by providing a centralized platform for residents, barangay personnel, administrators, and inspectors. It streamlines inspection requests, document verification, compliance evaluations, violation management, clearance issuance, and reporting.
 
-The project consists of three integrated applications sharing a single Laravel REST API and PostgreSQL database.
+The project consists of a unified React web platform and a Laravel REST API sharing a single MySQL database.
 
 ---
 
@@ -14,24 +14,22 @@ The Health & Safety Inspection System consists of:
 
 - **Barangay Management System (React Web)**
 - **Resident Portal (React Web)**
-- **Inspector Mobile Application (Flutter)**
+- **Inspector Portal (React Web)**
 - **Laravel REST API**
-- **PostgreSQL Database (Supabase)**
+- **MySQL Database**
 
-All applications communicate through a centralized REST API.
+Residents, staff, administrators, and inspectors use the same React application with role-based routing. All clients communicate through a centralized REST API.
 
 ```
-                           PostgreSQL
-                      (Supabase / Local)
-                               ▲
-                               │
-                     Laravel 13 REST API
-                               │
-        ┌──────────────────────┼──────────────────────┐
-        │                      │                      │
-        ▼                      ▼                      ▼
-Barangay Management      Resident Portal      Inspector Mobile
-      (React)                (React)              (Flutter)
+                        MySQL
+                       (Local)
+                          ▲
+                          │
+                Laravel 13 REST API
+                          │
+                          ▼
+              React Web Application
+         (Staff · Resident · Inspector)
 ```
 
 ---
@@ -106,20 +104,21 @@ Supported inspection categories:
 
 ---
 
-## Inspector Mobile Application
+## Inspector Portal (Web)
 
-Developed using Flutter.
+Inspectors use the same React web application with the `inspector` role.
 
 Inspectors can:
 
 - Login securely
 - View assigned inspections
 - Complete digital inspection checklists
-- Capture inspection photos
+- Upload inspection photos
 - Record violations
 - Add inspection remarks
-- Work offline
-- Synchronize completed inspections automatically
+- Submit inspection reports
+
+The inspector dashboard is responsive and can be used from a phone browser in the field.
 
 ---
 
@@ -304,17 +303,9 @@ Audit logs provide accountability and are intended to be immutable.
 
 ---
 
-## Mobile
-
-- Flutter
-- Dart
-
----
-
 ## Database
 
-- PostgreSQL
-- Supabase
+- MySQL
 
 ---
 
@@ -350,12 +341,6 @@ health-safety-system/
 │   ├── routes/
 │   └── README.md
 │
-├── mobile/            # Flutter Mobile Application
-│   ├── lib/
-│   ├── android/
-│   ├── ios/
-│   └── README.md
-│
 ├── docs/              # Project Documentation
 │
 └── README.md
@@ -366,11 +351,10 @@ health-safety-system/
 # Development Workflow
 
 1. Develop the Laravel REST API.
-2. Develop the React Web Application.
-3. Develop the Flutter Mobile Application.
-4. Integrate all applications through the REST API.
-5. Perform testing and validation.
-6. Deploy the system.
+2. Develop the React Web Application (resident, staff, and inspector roles).
+3. Integrate the frontend with the REST API.
+4. Perform testing and validation.
+5. Deploy the system.
 
 ---
 
@@ -382,9 +366,45 @@ Each application contains its own setup instructions.
 | -------------- | -------------------- |
 | Backend API    | `backend/README.md`  |
 | React Frontend | `frontend/README.md` |
-| Flutter Mobile | `mobile/README.md`   |
 
 Follow the setup guide in each directory before running the application.
+
+---
+
+# Docker Development Setup
+
+The web stack can run with Docker:
+
+- Laravel API on `http://localhost:8000`
+- React frontend on `http://localhost:5173`
+- MySQL on `localhost:3307` from the host, and `db:3306` from Docker containers
+
+From the project root:
+
+```bash
+docker compose up --build
+```
+
+The backend container installs Composer dependencies, creates `.env` from `.env.example` if needed, generates an app key when missing, links storage, and runs migrations.
+
+To run backend commands:
+
+```bash
+docker compose exec backend php artisan migrate:fresh --seed
+docker compose exec backend php artisan test
+```
+
+To stop the containers:
+
+```bash
+docker compose down
+```
+
+To reset the local Docker database:
+
+```bash
+docker compose down -v
+```
 
 ---
 
@@ -411,7 +431,7 @@ The project follows:
 - Laravel 13 Initialization
 - REST API
 - Sanctum Authentication
-- PostgreSQL Configuration
+- MySQL Configuration
 - API Versioning
 
 ### Frontend
@@ -422,21 +442,10 @@ The project follows:
 - Routing
 - Theme Configuration
 
-### Mobile
-
-- Flutter project initialization _(planned/in development)_
-
 ### Upcoming Features
 
-- Resident Portal
-- Inspection Workflow
-- AI OCR Integration
-- Inspector Mobile Workflow
-- QR Code Verification
 - Payment Management
-- Notifications
-- Reports & Analytics
-- Printable Government Documents
+- LGU multi-barangay administration
 
 ---
 

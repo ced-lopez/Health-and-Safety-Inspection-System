@@ -95,6 +95,24 @@ class OcrService
 
             $declaredType = DocumentTypes::canonical((string) ($document->document_type ?? ''));
 
+            if ($declaredType === DocumentTypes::VICINITY_MAP) {
+                $extraction->update([
+                    'classification' => DocumentTypes::VICINITY_MAP,
+                    'classification_confidence' => 0.0,
+                    'extracted_data' => [
+                        'warning' => 'Vicinity map is a diagram, requires staff visual verification.',
+                        'classification' => DocumentTypes::VICINITY_MAP,
+                    ],
+                    'ocr_text' => '',
+                    'ocr_raw_text' => '',
+                    'ocr_status' => 'needs_staff_verification',
+                    'processing_time_ms' => (int) round((hrtime(true) - $started) / 1e6),
+                ]);
+                $document->update(['status' => 'needs_review']);
+
+                return $extraction->fresh();
+            }
+
             $specialized = $imagePath !== null
                 && DocumentTypes::isIdType((string) $declaredType)
                 && in_array($declaredType, config('ocr.specialized_types', ['government_id', 'barangay_id']), true);
@@ -105,10 +123,21 @@ class OcrService
                 $regionResults = $run['region_results'] ?? [];
                 $temporaryFiles = array_merge($temporaryFiles, $run['temporary_files'] ?? []);
             } elseif ($imagePath !== null) {
-                // General-purpose documents keep the standard single pass.
+                // 7.1 Lightweight preprocessing before OCR (greyscale+contrast+sharpen+resize) + PSM selection
+                $preprocessor = new OcrPreprocessingService();
+                $preprocessedPath = tempnam(sys_get_temp_dir(), 'ocr_pre_').'.png';
+                $preprocessedPath = $preprocessor->prepare($imagePath, $preprocessedPath);
+                if ($preprocessedPath !== $imagePath && is_file($preprocessedPath)) {
+                    $temporaryFiles[] = $preprocessedPath;
+                    $imagePath = $preprocessedPath;
+                }
+                $psm = $this->psmForType($declaredType);
                 $enhancedPath = $this->enhanceImage($imagePath, $document->mime_type);
-                $temporaryFiles[] = $enhancedPath;
-                $text = $this->runTesseract($enhancedPath ?? $imagePath);
+                if ($enhancedPath) {
+                    $temporaryFiles[] = $enhancedPath;
+                }
+                $ocrResult = $this->runTesseractWithOptions($enhancedPath ?? $imagePath, ['psm' => $psm]);
+                $text = $ocrResult['text'];
             }
 
             $classification = $text !== ''
@@ -143,13 +172,24 @@ class OcrService
 
             $expiration = $this->fieldExtractor->detectExpiration($this->fieldValue($fields, 'expiration_date'));
 
+            // isExpired null => cannot confidently parse expiry, route to staff verification
+            if ($expiration['is_expired'] === null && $expiration['expiration_found'] === false) {
+                $lowConfidence[] = ['field' => 'expiration_date', 'value' => $this->fieldValue($fields, 'expiration_date'), 'confidence' => 0.0];
+            }
+
             $legacyType = DocumentTypes::legacyType($classification['type']);
             $effectiveType = $legacyType ?: $document->document_type;
 
             $missing = $this->detectMissingRequirements($document, $effectiveType);
 
             $needsReview = $this->needsReview($classification, $lowConfidence, $fields);
-            $ocrStatus = $needsReview ? 'needs_review' : 'completed';
+            $fieldConfidence = count($fields) > 0 ? collect($fields)->filter(fn ($f) => ($f['value'] ?? null) !== null && trim((string) $f['value']) !== '')->count() / count($fields) : 0;
+            if (($fieldConfidence < 0.5 && count($fields) > 0) || $expiration['is_expired'] === null) {
+                $needsReview = true;
+                $ocrStatus = 'needs_staff_verification';
+            } else {
+                $ocrStatus = $needsReview ? 'needs_review' : 'completed';
+            }
 
             $extractedData = [
                 'ocr_text' => $text,
@@ -191,7 +231,7 @@ class OcrService
                 'issue_date' => $this->fieldValue($fields, 'issue_date'),
                 'establishment_name' => $this->fieldValue($fields, 'establishment_name') ?? $this->fieldValue($fields, 'business_name'),
                 'certificate_number' => $this->fieldValue($fields, 'certificate_number'),
-                'is_expired' => $expiration['is_expired'],
+                'is_expired' => $expiration['is_expired'] ?? false,
                 'missing_requirements' => $missing,
                 'confidence_score' => round($classification['confidence'] * 100, 2),
                 'ai_processed_at' => now(),
@@ -555,9 +595,13 @@ class OcrService
             return [];
         }
 
+        // Whitelist: archived documents are excluded; barangay_id removed, proof_of_location renamed to Proof of Residency Clearance.
+        $whitelist = ['government_id', 'proof_of_location'];
+
         $rules = DocumentRequirementRule::query()
             ->where('inspection_category_id', $request->inspection_category_id)
             ->where('application_type_id', $request->application_type_id)
+            ->whereIn('document_type', $whitelist)
             ->where(function ($query) use ($request) {
                 $query->whereNull('sub_path')
                     ->orWhere('sub_path', $request->sub_path);
@@ -629,6 +673,14 @@ class OcrService
         }
 
         return false;
+    }
+
+    private function psmForType(?string $type): int
+    {
+        return match ($type) {
+            DocumentTypes::GOVERNMENT_ID, DocumentTypes::BARANGAY_ID, DocumentTypes::COMMUNITY_TAX_CERTIFICATE, DocumentTypes::BUSINESS_PERMIT => 6,
+            default => 6,
+        };
     }
 
     private function storageDisk(): string

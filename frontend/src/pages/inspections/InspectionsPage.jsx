@@ -47,6 +47,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   createInspectionSchedule,
   deleteInspectionSchedule,
+  downloadInspectionReportPdf,
   fetchComplianceChecklist,
   fetchInspectionOptions,
   fetchInspectionReport,
@@ -595,6 +596,25 @@ export default function InspectionsPage() {
 
   function handlePrintReport() {
     window.print()
+  }
+
+  async function handleDownloadReportPdf() {
+    if (!reportSchedule) return
+    try {
+      const blob = await downloadInspectionReportPdf(reportSchedule.id)
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      const slug = (reportData?.establishment?.name ?? 'inspection').toLowerCase().replace(/[^a-z0-9]+/g, '-')
+      a.download = `inspection-report-${slug}.pdf`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+    } catch (error) {
+      toast.error('Unable to download inspection report PDF')
+      console.error(error)
+    }
   }
 
   return (
@@ -1198,6 +1218,10 @@ export default function InspectionsPage() {
               </Card>
 
               <DialogFooter>
+                <Button variant="outline" type="button" onClick={handleDownloadReportPdf}>
+                  <FileText className="size-4" />
+                  Download Official PDF
+                </Button>
                 <Button variant="outline" type="button" onClick={handlePrintReport}>
                   <Printer className="size-4" />
                   Print / Save PDF

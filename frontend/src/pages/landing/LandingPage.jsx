@@ -37,9 +37,6 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 
-// ---------------------------------------------------------------------------
-// Existing data — unchanged content, unchanged shape.
-// ---------------------------------------------------------------------------
 const steps = [
   {
     icon: UserRound,
@@ -305,7 +302,7 @@ export default function LandingPage() {
               nativeButton={false}
               render={<Link to="/login" />}
             >
-              Resident Portal
+              Login
             </Button>
           </div>
         </div>
@@ -370,7 +367,7 @@ export default function LandingPage() {
                   to="/login"
                   className="font-medium text-primary underline-offset-4 hover:underline"
                 >
-                  Sign in to the resident portal
+                  Login
                 </Link>
               </p>
             </Reveal>
@@ -554,46 +551,6 @@ export default function LandingPage() {
         {/* ------------------------------------------------------------- */}
         {/* Why use our system                                            */}
         {/* ------------------------------------------------------------- */}
-        <section className="border-y border-border/70 bg-surface">
-          <div className="mx-auto w-full max-w-[1800px] px-6 sm:px-8 lg:px-12 xl:px-20 py-16 md:py-20">
-            <Reveal className="mx-auto mb-12 max-w-2xl space-y-2 text-center">
-              <h2 className="text-2xl font-bold tracking-tight md:text-3xl">
-                Why use our system?
-              </h2>
-              <p className="text-muted-foreground">
-                Built to make barangay compliance simple, transparent, and fast.
-              </p>
-            </Reveal>
-
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {features.map((feature, idx) => {
-                const Icon = feature.icon;
-                const isAccent = idx % 2 === 0;
-                return (
-                  <Reveal key={feature.title}>
-                    <Card className="h-full border-border/70 transition-all duration-300 hover:-translate-y-1 hover:shadow-lg">
-                      <CardHeader>
-                        <div
-                          className={`mb-2 flex size-10 items-center justify-center rounded-lg ${
-                            isAccent
-                              ? "bg-accent/10 text-accent"
-                              : "bg-primary/10 text-primary"
-                          }`}
-                        >
-                          <Icon className="size-5" />
-                        </div>
-                        <CardTitle className="text-base">
-                          {feature.title}
-                        </CardTitle>
-                        <CardDescription>{feature.description}</CardDescription>
-                      </CardHeader>
-                    </Card>
-                  </Reveal>
-                );
-              })}
-            </div>
-          </div>
-        </section>
 
         {/* ------------------------------------------------------------- */}
         {/* Categories                                                    */}
@@ -793,14 +750,6 @@ export default function LandingPage() {
                   >
                     Requirements
                   </a>
-                </li>
-                <li>
-                  <Link
-                    to="/login"
-                    className="transition-colors hover:text-foreground"
-                  >
-                    Resident Portal
-                  </Link>
                 </li>
               </ul>
             </div>

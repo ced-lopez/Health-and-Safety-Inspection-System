@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { AlertCircle, Edit, ExternalLink, Eye, FileUp, Search, Trash2 } from 'lucide-react'
+import { AlertCircle, Download, Edit, ExternalLink, Eye, FileUp, Search, Trash2 } from 'lucide-react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { toast } from 'sonner'
 
@@ -35,6 +35,7 @@ import {
 import {
   createViolation,
   deleteViolation,
+  downloadViolationNoticePdf,
   fetchViolation,
   fetchViolationOptions,
   fetchViolations,
@@ -363,6 +364,23 @@ export default function ViolationsPage() {
     }
   }
 
+  async function handleDownloadNotice(violation) {
+    try {
+      const blob = await downloadViolationNoticePdf(violation.id)
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `violation-notice-${violation.id}.pdf`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+    } catch (error) {
+      toast.error('Unable to download violation notice PDF')
+      console.error(error)
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -493,6 +511,14 @@ export default function ViolationsPage() {
                             onClick={() => openEvidenceDialog(violation)}
                           >
                             <FileUp className="size-4" />
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="icon-sm"
+                            aria-label="Download violation notice PDF"
+                            onClick={() => handleDownloadNotice(violation)}
+                          >
+                            <Download className="size-4" />
                           </Button>
                           <Button
                             variant="outline"

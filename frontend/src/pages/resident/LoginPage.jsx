@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -38,6 +38,13 @@ export default function ResidentLoginPage() {
   const location = useLocation();
   const [submitting, setSubmitting] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+
+  useEffect(() => {
+    if (location.state?.passwordReset) {
+      toast.success("Password reset successfully. Please sign in with your new password.");
+      navigate(location.pathname, { replace: true, state: null });
+    }
+  }, [location.pathname, location.state, navigate]);
 
   const form = useForm({
     resolver: zodResolver(loginSchema),
@@ -91,6 +98,11 @@ export default function ResidentLoginPage() {
     <div className="flex min-h-svh items-center justify-center bg-background p-4">
       <Card className="w-full max-w-md">
         <CardHeader className="space-y-3 text-center">
+          <div className="space-y-1">
+            <p className="text-[0.65rem] font-semibold tracking-[0.18em] text-muted-foreground">CALOOCAN CITY LOCAL GOVERNMENT</p>
+            <p className="text-xs font-bold tracking-wide text-foreground">BARANGAY 178</p>
+            <p className="text-[0.7rem] text-muted-foreground">Health and Safety Inspection System</p>
+          </div>
           <div className="mx-auto flex size-20 items-center justify-center overflow-hidden rounded-full">
             <img
               src={brgyLogo}
@@ -164,6 +176,15 @@ export default function ResidentLoginPage() {
                   </FormItem>
                 )}
               />
+
+              <div className="flex justify-end">
+                <Link
+                  to="/forgot-password"
+                  className="text-sm font-medium text-primary hover:underline"
+                >
+                  Forgot password?
+                </Link>
+              </div>
 
               <Button type="submit" className="w-full" disabled={submitting}>
                 {submitting ? "Signing in..." : "Sign In"}

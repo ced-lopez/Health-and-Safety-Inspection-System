@@ -357,7 +357,10 @@ export default function DashboardPage() {
           )}
         </div>
         <p className="text-sm text-muted-foreground">
-          Overview of health and safety inspection activities
+          Health and Safety Inspection System · Barangay 178, North Caloocan City · Barangay-Level Administrative System
+        </p>
+        <p className="text-xs text-muted-foreground/80">
+          Overview of health and safety inspection activities — scoped to Barangay 178 only
         </p>
       </div>
 

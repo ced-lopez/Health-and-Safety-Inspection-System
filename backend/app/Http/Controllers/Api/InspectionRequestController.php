@@ -22,6 +22,7 @@ use App\Notifications\NewApplicationSubmitted;
 use App\Notifications\NewInspectionAssignment;
 use App\Notifications\PreferredScheduleSubmitted;
 use App\Services\AuditLogger;
+use App\Services\PaymentService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -31,12 +32,18 @@ class InspectionRequestController extends BaseApiController
 {
     use NotifiesRoles;
 
+    public function __construct(private readonly PaymentService $payments) {}
+
     public function index(Request $request): JsonResponse
     {
         $user = $request->user();
         $query = InspectionRequest::query()
             ->with(['resident.role', 'inspectionCategory', 'applicationType', 'establishment', 'reviewedBy'])
-            ->withCount('documents');
+            ->withCount('documents')
+            ->withExists([
+                'payments as application_fee_paid' => fn ($q) => $q->where('type', PaymentService::TYPE_APPLICATION)->where('status', 'paid'),
+                'payments as clearance_fee_paid' => fn ($q) => $q->where('type', PaymentService::TYPE_CLEARANCE)->where('status', 'paid'),
+            ]);
 
         if ($user->role?->slug === 'resident') {
             $query->where('resident_id', $user->id);
@@ -165,6 +172,12 @@ class InspectionRequestController extends BaseApiController
 
         $requestNumber = 'BRGY-REQ-'.now()->format('Ymd').'-'.strtoupper(substr(uniqid(), -4));
 
+        // Auto-link establishment: if resident didn't link one, create/find one from request data so establishments table is populated.
+        $establishmentId = $validated['establishment_id'] ?? null;
+        if (empty($establishmentId)) {
+            $establishmentId = $this->findOrCreateEstablishmentForRequest($validated, $category, $user);
+        }
+
         $inspectionRequest = InspectionRequest::query()->create([
             'request_number' => $requestNumber,
             'resident_id' => $user->id,
@@ -172,7 +185,7 @@ class InspectionRequestController extends BaseApiController
             'application_type_id' => $validated['application_type_id'],
             'sub_path' => $validated['sub_path'] ?? null,
             'declared_animal_count' => $validated['declared_animal_count'] ?? null,
-            'establishment_id' => $validated['establishment_id'] ?? null,
+            'establishment_id' => $establishmentId,
             'applicant_name' => $validated['applicant_name'],
             'applicant_age' => $validated['applicant_age'] ?? null,
             'applicant_address' => $validated['applicant_address'],
@@ -184,8 +197,10 @@ class InspectionRequestController extends BaseApiController
             'submitted_at' => now(),
         ]);
 
+        $this->payments->ensurePending($inspectionRequest, PaymentService::TYPE_APPLICATION);
+
         $inspectionRequest->load([
-            'resident.role', 'inspectionCategory', 'applicationType', 'establishment',
+            'resident.role', 'inspectionCategory', 'applicationType', 'establishment', 'payments.confirmedBy.role',
         ]);
 
         $categoryName = $inspectionRequest->inspectionCategory?->name ?? 'Inspection';
@@ -234,6 +249,7 @@ class InspectionRequestController extends BaseApiController
             'inspectionAssignment.inspector.role',
             'inspectionAssignment.assignedBy.role',
             'schedules',
+            'payments.confirmedBy.role',
         ]);
 
         return $this->success(
@@ -337,6 +353,14 @@ class InspectionRequestController extends BaseApiController
     public function review(ReviewInspectionRequest $request, InspectionRequest $inspectionRequest): JsonResponse
     {
         $validated = $request->validated();
+
+        if (! in_array($validated['status'], ['rejected', 'cancelled'], true)
+            && ! $this->payments->isPaid($inspectionRequest, PaymentService::TYPE_APPLICATION)) {
+            return $this->error(
+                'This request cannot progress past Submitted until the application fee is confirmed paid.',
+                422
+            );
+        }
 
         $inspectionRequest->update([
             'status' => $validated['status'],
@@ -458,7 +482,7 @@ class InspectionRequestController extends BaseApiController
         $perPage = min($request->integer('per_page', 20), 50);
 
         $queue = InspectionRequest::query()
-            ->whereIn('status', ['approved_for_inspection', 'assigned'])
+            ->whereIn('status', ['approved_for_inspection', 'assigned', 'follow_up_requested'])
             ->with([
                 'resident.role',
                 'inspectionCategory',
@@ -470,7 +494,7 @@ class InspectionRequestController extends BaseApiController
             ->withCount('documents');
 
         if ($request->boolean('pending_schedule')) {
-            $queue->whereDoesntHave('schedules');
+            $queue->whereDoesntHave('schedules', fn ($query) => $query->whereNotIn('status', ['completed', 'cancelled']));
         }
 
         $queue = $queue
@@ -564,11 +588,65 @@ class InspectionRequestController extends BaseApiController
             ->all();
     }
 
+    private function findOrCreateEstablishmentForRequest(array $validated, ?InspectionCategory $category, User $user): ?int
+    {
+        $name = trim((string) ($validated['business_name'] ?? ''));
+        if ($name === '') {
+            $name = trim($validated['applicant_name']).' - '.($category?->name ?? 'Establishment');
+        }
+
+        // Reuse existing establishment for same resident + same name/address to avoid duplicates on repeated applications
+        $existing = Establishment::query()
+            ->where('resident_id', $user->id)
+            ->where('name', $name)
+            ->where('address', $validated['applicant_address'])
+            ->first();
+
+        if ($existing) {
+            return $existing->id;
+        }
+
+        $categoryMap = [
+            'business_establishments' => 'food_establishment',
+            'piggery' => 'piggery',
+            'poultry' => 'poultry',
+            'animal_raising_dogs' => 'dog_raising_kennel',
+        ];
+
+        $estCategory = $categoryMap[$category?->slug ?? ''] ?? 'food_establishment';
+
+        $registrationNumber = 'B178-EST-'.now()->format('Ymd').'-'.strtoupper(substr(uniqid(), -4));
+        // ensure uniqueness in race condition
+        while (Establishment::where('registration_number', $registrationNumber)->exists()) {
+            $registrationNumber = 'B178-EST-'.now()->format('Ymd').'-'.strtoupper(substr(uniqid(), -4));
+        }
+
+        $establishment = Establishment::query()->create([
+            'name' => $name,
+            'owner_name' => $validated['applicant_name'],
+            'address' => $validated['applicant_address'],
+            'business_type' => $category?->name ?? $validated['business_name'] ?? 'General',
+            'category' => $estCategory,
+            'contact_number' => $validated['contact_number'] ?? null,
+            'email' => $validated['email'] ?? null,
+            'registration_number' => $registrationNumber,
+            'status' => 'active',
+            'resident_id' => $user->id,
+            'ownership_status' => 'linked',
+        ]);
+
+        return $establishment->id;
+    }
+
     private function requirementRules(int $categoryId, int $applicationTypeId, ?string $subPath)
     {
+        // Archived: only whitelist remains active in resident upload (barangay_id removed, proof_of_location renamed).
+        $whitelist = ['government_id', 'proof_of_location'];
+
         return DocumentRequirementRule::query()
             ->where('inspection_category_id', $categoryId)
             ->where('application_type_id', $applicationTypeId)
+            ->whereIn('document_type', $whitelist)
             ->where(function ($query) use ($subPath) {
                 $query->whereNull('sub_path')
                     ->orWhere('sub_path', $subPath);

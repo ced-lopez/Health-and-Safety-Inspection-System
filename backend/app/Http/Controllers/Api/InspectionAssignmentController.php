@@ -10,16 +10,21 @@ use App\Models\Checklist;
 use App\Models\Inspection;
 use App\Models\InspectionAssignment;
 use App\Models\InspectionResult;
+use App\Models\Violation;
 use App\Notifications\Concerns\NotifiesRoles;
 use App\Notifications\InspectionCompleted;
 use App\Notifications\InspectionSubmittedForReview;
+use App\Notifications\ViolationNotice;
 use App\Services\AuditLogger;
+use App\Services\PaymentService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 class InspectionAssignmentController extends BaseApiController
 {
     use NotifiesRoles;
+
+    public function __construct(private readonly PaymentService $payments) {}
 
     public function index(Request $request): JsonResponse
     {
@@ -118,6 +123,7 @@ class InspectionAssignmentController extends BaseApiController
 
         $validated = $request->validate([
             'notes' => ['nullable', 'string'],
+            'outcome' => ['required', 'in:compliant,not_compliant'],
         ]);
 
         $inspectionAssignment->update([
@@ -136,13 +142,50 @@ class InspectionAssignmentController extends BaseApiController
         $inspectionRequest = $inspectionAssignment->inspectionRequest;
 
         $inspectionRequest->update([
-            'status' => 'inspection_completed',
+            'status' => $validated['outcome'] === 'compliant'
+                ? 'inspection_completed'
+                : 'violation_notice_issued',
         ]);
+
+        if ($inspectionAssignment->schedule) {
+            $inspectionAssignment->schedule->update(['status' => 'completed']);
+        }
+
+        if ($validated['outcome'] === 'compliant') {
+            // Payment confirmation, not the inspection itself, unlocks manual
+            // clearance issuance and its QR code.
+            $this->payments->ensurePending($inspectionRequest, PaymentService::TYPE_CLEARANCE, $inspection->id);
+        } else {
+            $failedResults = $inspection->results()
+                ->whereIn('compliance_status', ['non_compliant', 'needs_correction'])
+                ->with('checklistItem')
+                ->get();
+            $previous = $inspection->followUpOf?->violations()
+                ->whereIn('status', ['open', 'under_review', 'overdue'])
+                ->latest('id')->first();
+            $violation = Violation::query()->create([
+                'inspection_id' => $inspection->id,
+                'parent_violation_id' => $previous?->id,
+                'establishment_id' => $inspection->establishment_id,
+                'reported_by' => $request->user()->id,
+                'title' => $previous ? 'Repeat non-compliance after follow-up' : 'Inspection non-compliance',
+                'description' => $failedResults->map(fn ($result) => trim(($result->checklistItem?->title ?? 'Checklist item').': '.($result->remarks ?? 'Not compliant')))->implode("\n") ?: ($validated['notes'] ?? 'Inspection outcome marked not compliant.'),
+                'severity' => $previous?->severity ?? 'moderate',
+                'status' => 'open',
+                'correction_deadline' => today()->addDays(7),
+            ]);
+            $inspectionRequest->resident?->notify(new ViolationNotice(
+                $inspectionRequest->request_number,
+                $violation->title,
+                $violation->correction_deadline->format('M d, Y'),
+                $inspectionRequest->applicant_name,
+            ));
+        }
 
         $inspectionRequest->resident?->notify(new InspectionCompleted(
             $inspectionRequest->request_number,
             $inspectionRequest->applicant_name,
-            'Completed - submitted for review',
+            $validated['outcome'] === 'compliant' ? 'Compliant - clearance fee pending confirmation' : 'Not compliant - violation notice issued',
         ));
 
         $this->notifyRoles(new InspectionSubmittedForReview(
@@ -317,7 +360,7 @@ class InspectionAssignmentController extends BaseApiController
         $request = $assignment->inspectionRequest;
 
         $inspection = Inspection::query()
-            ->where('inspection_request_id', $assignment->inspection_request_id)
+            ->where('inspection_schedule_id', $assignment->schedule?->id)
             ->first();
 
         if (! $inspection && $request?->establishment_id) {
@@ -332,8 +375,12 @@ class InspectionAssignmentController extends BaseApiController
         if (! $inspection) {
             $inspection = Inspection::create([
                 'inspection_request_id' => $assignment->inspection_request_id,
+                'follow_up_of_inspection_id' => $assignment->schedule?->schedule_type === 'follow_up'
+                    ? Inspection::query()->where('inspection_request_id', $assignment->inspection_request_id)->where('status', 'completed')->latest('id')->value('id')
+                    : null,
                 'establishment_id' => $request?->establishment_id,
                 'inspector_id' => $assignment->inspector_id,
+                'inspection_schedule_id' => $assignment->schedule?->id,
                 'inspection_date' => today(),
                 'status' => 'ongoing',
                 'started_at' => now(),

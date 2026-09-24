@@ -2,7 +2,7 @@
 
 The **Health & Safety Inspection System Frontend** is a React 19 web application developed for **Barangay 178, North Caloocan City**.
 
-This application serves as a unified web platform for **Residents**, **Barangay Staff**, **Administrators**, and **Super Administrators** through role-based authentication and authorization.
+This application serves as a unified web platform for **Residents**, **Barangay Staff**, **Administrators**, **Super Administrators**, and **Inspectors** through role-based authentication and authorization.
 
 The frontend communicates with the Laravel 13 REST API using Axios and TanStack Query to provide a responsive, secure, and modern user experience.
 
@@ -13,17 +13,15 @@ The frontend communicates with the Laravel 13 REST API using Axios and TanStack 
 ```
                     Laravel REST API
                            │
-                    PostgreSQL Database
-                     (Supabase / Local)
+                       MySQL Database
+                           (Local)
                            │
-        ┌──────────────────┼──────────────────┐
-        │                  │                  │
-        ▼                  ▼                  ▼
- Barangay Portal     Resident Portal     Inspector Mobile
-     (React)             (React)             (Flutter)
+                           ▼
+                 React Web Application
+        (Staff/Admin · Resident · Inspector)
 ```
 
-The Barangay Portal and Resident Portal are part of the same React application and use role-based routing.
+Staff, resident, and inspector experiences are part of the same React application and use role-based routing.
 
 ---
 
@@ -52,7 +50,7 @@ The frontend supports the following roles:
 - Super Admin
 - Admin
 - Barangay Staff
-- Inspector (Web Access, if applicable)
+- Inspector (Web Portal — assignments, checklist, violations, report submission)
 - Resident
 
 Each role is redirected to its own dashboard after authentication.

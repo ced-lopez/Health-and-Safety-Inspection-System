@@ -114,7 +114,7 @@ class InspectionScheduleController extends BaseApiController
             'inspector_id' => (int) $validated['inspector_id'],
             'inspection_request_id' => $inspectionRequest->id,
             'status' => 'scheduled',
-            'schedule_type' => 'initial',
+            'schedule_type' => $inspectionRequest->status === 'follow_up_requested' ? 'follow_up' : 'initial',
         ];
 
         if (! empty($validated['scheduled_at'])) {
@@ -168,6 +168,8 @@ class InspectionScheduleController extends BaseApiController
         $existing = ! empty($payload['inspection_request_id'])
             ? InspectionSchedule::query()
                 ->where('inspection_request_id', $payload['inspection_request_id'])
+                ->whereNotIn('status', ['completed', 'cancelled'])
+                ->latest('id')
                 ->first()
             : null;
 

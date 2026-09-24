@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { Check, Eye, EyeOff, Mail, MessageSquareText, Wand2 } from 'lucide-react'
+import { Check, Eye, EyeOff, Wand2 } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { useAuth } from '@/context/AuthContext'
@@ -58,16 +58,10 @@ const registerSchema = z
     }
   })
 
-const deliveryChannels = [
-  { value: 'email', label: 'Email', icon: Mail, description: 'Send the code to your email', disabled: false },
-  { value: 'sms', label: 'SMS', icon: MessageSquareText, description: 'Send the code to your phone', disabled: true },
-]
-
 export default function RegisterPage() {
   const { register: registerUser } = useAuth()
   const navigate = useNavigate()
   const [submitting, setSubmitting] = useState(false)
-  const [deliveryChannel, setDeliveryChannel] = useState('email')
   const [showPassword, setShowPassword] = useState(false)
   const [showConfirmPassword, setShowConfirmPassword] = useState(false)
 
@@ -116,7 +110,7 @@ export default function RegisterPage() {
         phone: values.phone,
         password: values.password,
         password_confirmation: values.confirmPassword,
-        verification_channel: deliveryChannel,
+        verification_channel: 'email',
       })
       toast.success('Account created. Check your inbox for the verification code.')
       navigate(`/register/verify?email=${encodeURIComponent(values.email)}`, { replace: true })
@@ -330,50 +324,6 @@ export default function RegisterPage() {
                   </FormItem>
                 )}
               />
-
-              <div className="space-y-2">
-                <FormLabel>Verification method</FormLabel>
-                <div className="grid grid-cols-2 gap-2">
-                  {deliveryChannels.map((channel) => {
-                    const Icon = channel.icon;
-                    const active = deliveryChannel === channel.value;
-                    return (
-                      <button
-                        key={channel.value}
-                        type="button"
-                        disabled={channel.disabled}
-                        onClick={() => setDeliveryChannel(channel.value)}
-                        className={cn(
-                          "flex flex-col items-start gap-1 rounded-lg border p-3 text-left transition-colors",
-                          channel.disabled
-                            ? "cursor-not-allowed border-border bg-muted/40 opacity-60"
-                            : active
-                              ? "border-accent bg-secondary text-secondary-foreground"
-                              : "border-border bg-background hover:bg-muted",
-                        )}
-                      >
-                        <Icon
-                          className={cn(
-                            "size-4",
-                            active ? "text-accent" : "text-muted-foreground",
-                          )}
-                        />
-                        <span className="flex items-center gap-1.5 text-sm font-medium">
-                          {channel.label}
-                          {channel.disabled && (
-                            <span className="rounded-full bg-muted px-1.5 py-0.5 text-[0.6rem] font-semibold uppercase tracking-wide text-muted-foreground">
-                              Coming soon
-                            </span>
-                          )}
-                        </span>
-                        <span className="text-xs text-muted-foreground">
-                          {channel.description}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
 
               <Button type="submit" className="w-full" disabled={submitting}>
                 {submitting ? "Creating account..." : "Register"}

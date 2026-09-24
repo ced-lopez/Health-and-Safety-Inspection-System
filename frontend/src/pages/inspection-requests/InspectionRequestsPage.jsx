@@ -13,6 +13,8 @@ import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { fetchInspectionRequests, fetchInspectionRequest, reviewInspectionRequest, assignInspectionRequest, fetchRequestRequirements, confirmPreferredSchedule } from '@/services/inspectionRequestService'
+import { fetchPayments } from '@/services/paymentService'
+import PaymentSection from '@/components/payments/PaymentSection'
 import api from '@/services/api'
 
 const statusLabels = {
@@ -136,6 +138,11 @@ export default function InspectionRequestsPage() {
   const [confirmForm, setConfirmForm] = useState({ inspector_id: '', date: '', time: '' })
   const [confirmSubmitting, setConfirmSubmitting] = useState(false)
 
+  const [payments, setPayments] = useState([])
+  const [feeSchedule, setFeeSchedule] = useState(null)
+  const [paymentStatus, setPaymentStatus] = useState(null)
+  const [paymentsLoading, setPaymentsLoading] = useState(false)
+
   const queryParams = useMemo(() => ({
     search: filters.search || undefined,
     status: filters.status !== 'all' ? filters.status : undefined,
@@ -162,14 +169,49 @@ export default function InspectionRequestsPage() {
 
   const loading = isLoading && requests.length === 0
 
+  async function loadPayments(requestId) {
+    setPaymentsLoading(true)
+    try {
+      const res = await fetchPayments(requestId)
+      const d = res.data ?? res
+      setPayments(d.payments ?? [])
+      setFeeSchedule(d.fee_schedule ?? null)
+      setPaymentStatus(d.payment_status ?? null)
+    } catch {
+      // non-critical
+    } finally {
+      setPaymentsLoading(false)
+    }
+  }
+
   async function openDetail(request) {
     setDetailOpen(true)
     setDetailLoading(true)
+    setPayments([])
+    setFeeSchedule(null)
+    setPaymentStatus(request.payment_status ?? null)
     try {
       const detail = await fetchInspectionRequest(request.id)
-      setSelectedRequest(detail.data ?? detail)
+      const d = detail.data ?? detail
+      setSelectedRequest(d)
+      if (d.payment_status) setPaymentStatus(d.payment_status)
+      if (d.payments) setPayments(d.payments)
+      loadPayments(d.id ?? request.id)
     } catch { toast.error('Unable to load details') }
     finally { setDetailLoading(false) }
+  }
+
+  async function refreshDetailAndPayments() {
+    if (!selectedRequest?.id) return
+    try {
+      const detail = await fetchInspectionRequest(selectedRequest.id)
+      const d = detail.data ?? detail
+      setSelectedRequest(d)
+      if (d.payment_status) setPaymentStatus(d.payment_status)
+      if (d.payments) setPayments(d.payments)
+    } catch { /* ignore */ }
+    await loadPayments(selectedRequest.id)
+    await refetch()
   }
 
   function openReview(request, decision) {
@@ -276,10 +318,12 @@ export default function InspectionRequestsPage() {
   function actionButtons(req) {
     if (!canReview) return null
     const buttons = []
+    const appPaid = req.payment_status?.application_fee_paid
+    const needsPayment = req.status === 'submitted' && !appPaid
     if (req.status === 'submitted') {
       buttons.push(
-        <Button key="review" variant="outline" size="sm" onClick={() => openReview(req, 'under_review')}>
-          <CheckCircle2 className="size-4" /> Review
+        <Button key="review" variant="outline" size="sm" onClick={() => openReview(req, 'under_review')} disabled={needsPayment} title={needsPayment ? 'Application fee must be paid before review' : undefined}>
+          <CheckCircle2 className="size-4" /> Review {needsPayment ? '(Payment Required)' : ''}
         </Button>
       )
     }
@@ -353,6 +397,7 @@ export default function InspectionRequestsPage() {
                       <TableHead>Business</TableHead>
                       <TableHead>Category</TableHead>
                       <TableHead>Status</TableHead>
+                      <TableHead>Payment</TableHead>
                       <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -369,6 +414,12 @@ export default function InspectionRequestsPage() {
                           </div>
                         </TableCell>
                         <TableCell><Badge variant={statusVariant(req.status)}>{statusLabels[req.status] ?? req.status}</Badge></TableCell>
+                        <TableCell>
+                          <div className="flex flex-col gap-1 text-xs">
+                            <Badge variant={req.payment_status?.application_fee_paid ? 'default' : 'outline'} className="w-fit">App: {req.payment_status?.application_fee_paid ? 'Paid' : 'Pending'}</Badge>
+                            <Badge variant={req.payment_status?.clearance_fee_paid ? 'default' : 'outline'} className="w-fit">Clr: {req.payment_status?.clearance_fee_paid ? 'Paid' : 'Pending'}</Badge>
+                          </div>
+                        </TableCell>
                         <TableCell className="text-right">
                           <div className="flex justify-end gap-2 flex-wrap">
                             <Button variant="outline" size="sm" onClick={() => openDetail(req)}><Eye className="size-4" /> View</Button>
@@ -445,6 +496,18 @@ export default function InspectionRequestsPage() {
                     ))}
                   </div>
                 )}
+              </div>
+
+              <div className="border-t pt-4">
+                <PaymentSection
+                  requestId={selectedRequest.id}
+                  paymentStatus={paymentStatus ?? selectedRequest.payment_status}
+                  payments={payments.length ? payments : (selectedRequest.payments ?? [])}
+                  feeSchedule={feeSchedule}
+                  loading={paymentsLoading}
+                  onRefresh={refreshDetailAndPayments}
+                  canRecord={canReview}
+                />
               </div>
             </div>
           ) : <p className="text-sm text-muted-foreground text-center py-4">No details.</p>}

@@ -16,6 +16,7 @@ use App\Models\QrCode;
 use App\Notifications\ClearanceApproved;
 use App\Services\AuditLogger;
 use App\Services\DocumentPdfService;
+use App\Services\PaymentService;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -25,7 +26,10 @@ use Symfony\Component\HttpFoundation\Response;
 
 class CertificationController extends BaseApiController
 {
-    public function __construct(private readonly DocumentPdfService $pdfService) {}
+    public function __construct(
+        private readonly DocumentPdfService $pdfService,
+        private readonly PaymentService $payments,
+    ) {}
 
     public function index(Request $request): JsonResponse
     {
@@ -127,6 +131,7 @@ class CertificationController extends BaseApiController
                 'inspection_date' => $inspection->inspection_date?->toDateString(),
                 'status' => $inspection->status,
                 'establishment_id' => $inspection->establishment_id,
+                'inspection_request_id' => $inspection->inspection_request_id,
                 'establishment' => [
                     'id' => $inspection->establishment?->id,
                     'name' => $inspection->establishment?->name,
@@ -143,6 +148,13 @@ class CertificationController extends BaseApiController
     public function store(StoreIssuanceRequest $request): JsonResponse
     {
         $validated = $request->validated();
+
+        if ($validated['document_kind'] === 'clearance') {
+            $blocked = $this->assertClearanceFeePaid($validated['inspection_id'] ?? null);
+            if ($blocked) {
+                return $blocked;
+            }
+        }
 
         $document = DB::transaction(function () use ($request, $validated) {
             $document = $validated['document_kind'] === 'certification'
@@ -197,6 +209,13 @@ class CertificationController extends BaseApiController
     {
         $document = $this->findDocument($kind, $id);
         $validated = $request->validated();
+
+        if ($kind === 'clearance') {
+            $blocked = $this->assertClearanceFeePaid($validated['inspection_id'] ?? $document->inspection_id);
+            if ($blocked) {
+                return $blocked;
+            }
+        }
 
         $document->update($kind === 'certification' ? [
             'establishment_id' => $validated['establishment_id'],
@@ -272,6 +291,13 @@ class CertificationController extends BaseApiController
             return $this->error('Only pending or expired documents can be approved.', 422);
         }
 
+        if ($document instanceof Clearance) {
+            $blocked = $this->assertClearanceFeePaid($document->inspection_id);
+            if ($blocked) {
+                return $blocked;
+            }
+        }
+
         $document->update(['status' => 'active']);
         $document->qrCode?->update(['is_active' => true]);
 
@@ -323,6 +349,13 @@ class CertificationController extends BaseApiController
     public function renew(Request $request, string $kind, int $id): JsonResponse
     {
         $document = $this->findDocument($kind, $id);
+
+        if ($document instanceof Clearance) {
+            $blocked = $this->assertClearanceFeePaid($document->inspection_id);
+            if ($blocked) {
+                return $blocked;
+            }
+        }
 
         $validated = $request->validate([
             'status' => ['nullable', 'string', 'in:pending,active'],
@@ -395,8 +428,18 @@ class CertificationController extends BaseApiController
             ->with('qrable')
             ->first();
 
-        if (! $qrCode || ! $qrCode->is_active || ! $qrCode->qrable) {
+        if (! $qrCode || ! $qrCode->qrable) {
             return $this->error('Document verification failed', 404);
+        }
+
+        // Verification is the final authority for a printed QR: do not wait
+        // for the scheduled expiry command before presenting an expired result.
+        $document = $qrCode->qrable;
+        if ($document->status === 'active'
+            && $document->expiration_date
+            && $document->expiration_date->lt(today())) {
+            $document->update(['status' => 'expired']);
+            $document->refresh();
         }
 
         $qrCode->increment('verification_count');
@@ -406,15 +449,15 @@ class CertificationController extends BaseApiController
             null,
             'QR Verification',
             'Verified',
-            "QR code {$qrCode->code} verified for ".$this->numberFor($qrCode->qrable),
-            $qrCode->qrable,
+            "QR code {$qrCode->code} verified for ".$this->numberFor($document),
+            $document,
             request(),
             event: 'qr.verified',
         );
 
         return $this->success([
             'qr_code' => new QrCodeResource($qrCode->refresh()),
-            'document' => $this->resourceFor($qrCode->qrable),
+            'document' => $this->resourceFor($document),
         ], 'Document verified successfully');
     }
 
@@ -439,6 +482,24 @@ class CertificationController extends BaseApiController
             $inspectionRequest->applicant_name,
             $expiration ?: '12 months from issue',
         ));
+    }
+
+    private function assertClearanceFeePaid(?int $inspectionId): ?JsonResponse
+    {
+        $inspectionRequest = $this->payments->requestFromInspection($inspectionId);
+
+        if (! $inspectionRequest) {
+            return null;
+        }
+
+        if (! $this->payments->isPaid($inspectionRequest, PaymentService::TYPE_CLEARANCE)) {
+            return $this->error(
+                'Clearance and QR generation are blocked until the clearance fee is confirmed paid.',
+                422
+            );
+        }
+
+        return null;
     }
 
     private function findDocument(string $kind, int $id): Certification|Clearance

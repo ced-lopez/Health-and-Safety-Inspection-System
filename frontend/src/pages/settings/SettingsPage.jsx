@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useTheme } from 'next-themes'
 import {
+  Building2,
   Copy,
   Eye,
   EyeOff,
@@ -86,6 +87,10 @@ export default function SettingsPage() {
             <Palette className="size-4" />
             Appearance
           </TabsTrigger>
+          <TabsTrigger value="organization">
+            <Building2 className="size-4" />
+            Organization
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="general">
@@ -148,6 +153,10 @@ export default function SettingsPage() {
 
         <TabsContent value="appearance">
           <AppearanceTab />
+        </TabsContent>
+
+        <TabsContent value="organization">
+          <OrganizationTab />
         </TabsContent>
       </Tabs>
     </div>
@@ -302,6 +311,46 @@ function SecurityTab() {
             </Button>
           </div>
         </form>
+      </CardContent>
+    </Card>
+  )
+}
+
+function OrganizationTab() {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Organization Profile</CardTitle>
+        <CardDescription>Barangay-level administrative system positioning within LGU</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="rounded-lg border border-border bg-muted/20 p-4">
+          <p className="text-xs font-semibold tracking-wide text-muted-foreground">Local Government Unit of Caloocan City · Barangay 178 · Health &amp; Safety Inspection System</p>
+          <p className="mt-1 text-xs text-muted-foreground">Barangay-Level Administrative System — Implementation Site: Barangay 178, North Caloocan City</p>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="rounded-lg border border-border p-3">
+            <p className="text-xs text-muted-foreground">Local Government Unit</p>
+            <p className="text-sm font-medium">City Government of Caloocan</p>
+          </div>
+          <div className="rounded-lg border border-border p-3">
+            <p className="text-xs text-muted-foreground">Administrative Unit</p>
+            <p className="text-sm font-medium">Barangay 178</p>
+          </div>
+          <div className="rounded-lg border border-border p-3">
+            <p className="text-xs text-muted-foreground">Area</p>
+            <p className="text-sm font-medium">North Caloocan City</p>
+          </div>
+          <div className="rounded-lg border border-border p-3">
+            <p className="text-xs text-muted-foreground">System Implementation Site</p>
+            <p className="text-sm font-medium">Barangay 178</p>
+          </div>
+          <div className="rounded-lg border border-border p-3 sm:col-span-2">
+            <p className="text-xs text-muted-foreground">System Classification</p>
+            <p className="text-sm font-medium">Barangay-Level Administrative System</p>
+          </div>
+        </div>
+        <p className="text-xs text-muted-foreground">All records and reports in this system are scoped to Barangay 178 only — not city-wide.</p>
       </CardContent>
     </Card>
   )

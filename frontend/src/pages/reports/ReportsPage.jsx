@@ -193,8 +193,10 @@ export default function ReportsPage() {
   return (
     <div className="space-y-6">
       <div>
+        <p className="text-[0.65rem] font-semibold tracking-[0.18em] text-muted-foreground">LOCAL GOVERNMENT UNIT OF CALOOCAN CITY · BARANGAY 178 · HEALTH &amp; SAFETY INSPECTION SYSTEM</p>
         <h2 className="text-2xl font-semibold tracking-tight">Reports & Analytics</h2>
-        <p className="text-sm text-muted-foreground">Generate and view reports across all modules</p>
+        <p className="text-sm text-muted-foreground">Generate and view reports across all modules — scoped to Barangay 178 only</p>
+        <p className="text-xs text-muted-foreground/80">All figures reflect Barangay 178 records only — not city-wide aggregation</p>
       </div>
 
       <Tabs defaultValue="overview">

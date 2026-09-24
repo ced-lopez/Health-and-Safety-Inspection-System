@@ -177,7 +177,6 @@ class AuthTest extends TestCase
         $payload = [
             'email' => 'unverified@example.com',
             'password' => 'password123',
-            'portal' => 'resident',
         ];
 
         $response = $this->postJson('/api/v1/auth/login', $payload);
@@ -250,7 +249,6 @@ class AuthTest extends TestCase
         $payload = [
             'email' => 'test@example.com',
             'password' => 'password123',
-            'portal' => 'staff',
         ];
 
         $response = $this->postJson('/api/v1/auth/login', $payload);
@@ -261,6 +259,7 @@ class AuthTest extends TestCase
                 'message',
                 'data' => [
                     'token',
+                    'role',
                     'user' => [
                         'id',
                         'name',
@@ -270,6 +269,8 @@ class AuthTest extends TestCase
                     ],
                 ],
             ]);
+
+        $response->assertJsonPath('data.role', 'barangay_staff');
 
         // Assert audit log was recorded
         $this->assertDatabaseHas('audit_logs', [
@@ -292,7 +293,6 @@ class AuthTest extends TestCase
         $payload = [
             'email' => 'test@example.com',
             'password' => 'wrongpassword',
-            'portal' => 'staff',
         ];
 
         $response = $this->postJson('/api/v1/auth/login', $payload);
@@ -315,7 +315,6 @@ class AuthTest extends TestCase
         $payload = [
             'email' => 'deactivated@example.com',
             'password' => 'password123',
-            'portal' => 'staff',
         ];
 
         $response = $this->postJson('/api/v1/auth/login', $payload);
@@ -419,7 +418,6 @@ class AuthTest extends TestCase
         $response = $this->postJson('/api/v1/auth/login', [
             'email' => 'returning@example.com',
             'password' => 'password123',
-            'portal' => 'resident',
         ]);
 
         // A verified resident still receives a fresh code and no token on login
@@ -444,7 +442,6 @@ class AuthTest extends TestCase
         $this->postJson('/api/v1/auth/login', [
             'email' => 'returning@example.com',
             'password' => 'password123',
-            'portal' => 'resident',
         ])->assertStatus(200);
 
         $this->postJson('/api/v1/auth/verify', [
@@ -470,21 +467,20 @@ class AuthTest extends TestCase
         $this->postJson('/api/v1/auth/login', [
             'email' => 'staffverified@example.com',
             'password' => 'password123',
-            'portal' => 'staff',
         ])->assertStatus(200)->assertJsonStructure(['data' => ['token']]);
 
         Notification::assertNothingSent();
     }
 
-    public function test_resident_cannot_login_through_staff_portal(): void
+    public function test_resident_can_login_through_the_unified_endpoint(): void
     {
         Notification::fake();
 
         $residentRole = Role::query()->where('slug', 'resident')->first();
-        User::query()->create([
+        $user = User::query()->create([
             'role_id' => $residentRole->id,
-            'name' => 'Resident Portal User',
-            'email' => 'resident.portal@example.com',
+            'name' => 'Unified Resident User',
+            'email' => 'unified.resident@example.com',
             'phone' => '09151117777',
             'password' => Hash::make('password123'),
             'is_active' => true,
@@ -492,63 +488,61 @@ class AuthTest extends TestCase
         ]);
 
         $response = $this->postJson('/api/v1/auth/login', [
-            'email' => 'resident.portal@example.com',
+            'email' => 'unified.resident@example.com',
             'password' => 'password123',
-            'portal' => 'staff',
         ]);
 
-        $response->assertStatus(422)
-            ->assertJsonValidationErrors(['email'])
-            ->assertJsonFragment([
-                'email' => ['This account is a resident. Residents must sign in through the resident portal.'],
-            ]);
+        $response->assertOk()
+            ->assertJsonPath('data.role', 'resident')
+            ->assertJsonPath('data.verification_required', true);
 
-        Notification::assertNothingSent();
+        Notification::assertSentTo($user, SendVerificationCode::class);
     }
 
-    public function test_staff_cannot_login_through_resident_portal(): void
+    public function test_staff_can_login_through_the_unified_endpoint(): void
     {
         $staffRole = Role::query()->where('slug', 'barangay_staff')->first();
         User::query()->create([
             'role_id' => $staffRole->id,
-            'name' => 'Staff Portal User',
-            'email' => 'staff.portal@example.com',
+            'name' => 'Unified Staff User',
+            'email' => 'unified.staff@example.com',
             'password' => Hash::make('password123'),
             'is_active' => true,
             'email_verified_at' => now(),
         ]);
 
         $response = $this->postJson('/api/v1/auth/login', [
-            'email' => 'staff.portal@example.com',
+            'email' => 'unified.staff@example.com',
             'password' => 'password123',
-            'portal' => 'resident',
         ]);
 
-        $response->assertStatus(422)
-            ->assertJsonValidationErrors(['email'])
-            ->assertJsonFragment([
-                'email' => ['This account is an internal account. Barangay personnel must sign in through the internal portal.'],
-            ]);
+        $response->assertOk()
+            ->assertJsonPath('data.role', 'barangay_staff')
+            ->assertJsonStructure(['data' => ['token']]);
     }
 
-    public function test_login_requires_portal_field(): void
+    public function test_unified_login_enforces_a_single_session_for_each_internal_role(): void
     {
-        $staffRole = Role::query()->where('slug', 'barangay_staff')->first();
-        User::query()->create([
-            'role_id' => $staffRole->id,
-            'name' => 'No Portal User',
-            'email' => 'noportal@example.com',
-            'password' => Hash::make('password123'),
-            'is_active' => true,
-            'email_verified_at' => now(),
-        ]);
+        foreach (['administrator', 'barangay_staff', 'inspector'] as $roleSlug) {
+            $role = Role::query()->where('slug', $roleSlug)->first();
+            $user = User::query()->create([
+                'role_id' => $role->id,
+                'name' => "Unified {$roleSlug} User",
+                'email' => "unified.{$roleSlug}@example.com",
+                'password' => Hash::make('password123'),
+                'is_active' => true,
+                'email_verified_at' => now(),
+            ]);
+            $user->createToken('previous-session');
 
-        $response = $this->postJson('/api/v1/auth/login', [
-            'email' => 'noportal@example.com',
-            'password' => 'password123',
-        ]);
+            $this->postJson('/api/v1/auth/login', [
+                'email' => $user->email,
+                'password' => 'password123',
+            ])->assertOk()
+                ->assertJsonPath('data.role', $roleSlug)
+                ->assertJsonStructure(['data' => ['token']]);
 
-        $response->assertStatus(422)
-            ->assertJsonValidationErrors(['portal']);
+            $this->assertSame(1, $user->tokens()->count());
+        }
     }
 }

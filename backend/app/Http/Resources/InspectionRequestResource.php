@@ -36,6 +36,30 @@ class InspectionRequestResource extends JsonResource
             'documents' => DocumentResource::collection($this->whenLoaded('documents')),
             'inspection_assignment' => new InspectionAssignmentResource($this->whenLoaded('inspectionAssignment')),
             'schedules' => InspectionScheduleResource::collection($this->whenLoaded('schedules')),
+            'payments' => PaymentResource::collection($this->whenLoaded('payments')),
+            'payment_status' => $this->paymentStatus(),
+        ];
+    }
+
+    private function paymentStatus(): array
+    {
+        if (array_key_exists('application_fee_paid', $this->resource->getAttributes())
+            || array_key_exists('clearance_fee_paid', $this->resource->getAttributes())) {
+            return [
+                'application_fee_paid' => (bool) $this->application_fee_paid,
+                'clearance_fee_paid' => (bool) $this->clearance_fee_paid,
+            ];
+        }
+
+        $payments = $this->relationLoaded('payments') ? $this->payments : collect();
+
+        return [
+            'application_fee_paid' => $payments->contains(
+                fn ($payment) => $payment->type === 'application_fee' && $payment->status === 'paid'
+            ),
+            'clearance_fee_paid' => $payments->contains(
+                fn ($payment) => $payment->type === 'clearance_fee' && $payment->status === 'paid'
+            ),
         ];
     }
 }

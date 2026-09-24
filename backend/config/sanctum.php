@@ -52,6 +52,10 @@ return [
 
     'expiration' => env('SANCTUM_TOKEN_EXPIRATION_MINUTES', 43200),
 
+    'staff_expiration' => env('SANCTUM_STAFF_EXPIRATION_MINUTES', 480),
+
+    'staff_idle_minutes' => env('SANCTUM_STAFF_IDLE_MINUTES', 60),
+
     /*
     |--------------------------------------------------------------------------
     | Token Prefix

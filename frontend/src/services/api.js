@@ -1,6 +1,6 @@
 import axios from 'axios'
 
-import { clearAuthSession, getStoredToken, getStoredUser } from '@/services/authService'
+import { clearAuthSession, getStoredToken } from '@/services/authService'
 
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL || 'http://localhost:8000/api',
@@ -25,8 +25,6 @@ api.interceptors.response.use(
   (error) => {
     if (error.response?.status === 401) {
       const hadSession = Boolean(getStoredToken())
-      const storedUser = getStoredUser()
-
       clearAuthSession()
 
       // If the session became invalid (expired/revoked token) while the user was
@@ -34,8 +32,7 @@ api.interceptors.response.use(
       // not enough on its own because the in-memory auth context still thinks the
       // user is logged in, which triggers a loop of failing protected requests.
       if (hadSession) {
-        const loginPath = storedUser?.role?.slug === 'resident' ? '/login' : '/admin/login'
-        window.location.assign(loginPath)
+        window.location.assign('/login')
       }
     }
 

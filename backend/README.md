@@ -6,7 +6,7 @@ It serves as the centralized backend for the Health & Safety Inspection System, 
 
 - Barangay Management System (React Web)
 - Resident Portal (React Web)
-- Inspector Mobile Application (Flutter)
+- Inspector Portal (React Web)
 
 The API manages authentication, inspection requests, AI-assisted document processing, compliance checklists, inspection reports, violation management, payment recording, QR-coded clearance verification, notifications, audit logs, and printable government documents.
 
@@ -17,17 +17,15 @@ The API manages authentication, inspection requests, AI-assisted document proces
 ```
                     Laravel REST API
                            │
-                    PostgreSQL Database
-                     (Supabase / Local)
+                       MySQL Database
+                           (Local)
                            │
-        ┌──────────────────┼──────────────────┐
-        │                  │                  │
-        ▼                  ▼                  ▼
- Barangay Web       Resident Portal     Inspector Mobile
-   (React)             (React)             (Flutter)
+                           ▼
+                 React Web Application
+            (Staff · Resident · Inspector)
 ```
 
-All applications communicate through one centralized REST API.
+All roles communicate through one centralized REST API.
 
 ---
 
@@ -45,8 +43,7 @@ All applications communicate through one centralized REST API.
 
 ## Database
 
-- PostgreSQL
-- Supabase
+- MySQL
 
 ## AI Integration
 
@@ -124,15 +121,16 @@ The system supports inspections for:
 
 ---
 
-## Inspector Mobile API
+## Inspector Web API
+
+Used by the inspector role in the React web portal (same endpoints as a dedicated mobile client would use):
 
 - Inspector Login
 - Assigned Inspections
 - Digital Inspection Checklist
 - Photo Upload
 - Violation Recording
-- Offline Synchronization
-- Inspection Submission
+- Inspection Report Submission
 
 ---
 
@@ -310,7 +308,7 @@ Generate the application key.
 php artisan key:generate
 ```
 
-Configure the PostgreSQL database.
+Configure the MySQL database.
 
 Run database migrations.
 
@@ -352,16 +350,16 @@ GET /api/v1/health
 APP_URL=http://localhost:8000
 
 FRONTEND_URL=http://localhost:5173
+CORS_ALLOWED_ORIGINS=http://localhost:5173,http://localhost:5174
 
-DB_CONNECTION=pgsql
-DB_HOST=aws-1-ap-northeast-2.pooler.supabase.com
-DB_PORT=5432
-DB_DATABASE=postgres
-DB_USERNAME=postgres.YOUR_PROJECT_REF
-DB_PASSWORD=YOUR_PASSWORD
-DB_SSLMODE=require
+DB_CONNECTION=mysql
+DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_DATABASE=health_safety
+DB_USERNAME=health_safety
+DB_PASSWORD=secret
 
-SANCTUM_STATEFUL_DOMAINS=localhost,localhost:5173,127.0.0.1,127.0.0.1:5173
+SANCTUM_STATEFUL_DOMAINS=localhost,localhost:5173,localhost:5174,127.0.0.1,127.0.0.1:5173,127.0.0.1:5174
 ```
 
 ---
@@ -459,7 +457,7 @@ composer validate
 - REST API Structure
 - API Versioning
 - Laravel Sanctum Configuration
-- PostgreSQL Configuration
+- MySQL Configuration
 - Health Check Endpoint
 - Base Project Architecture
 
@@ -469,7 +467,7 @@ composer validate
 - Resident Portal API
 - Inspection Request Workflow
 - AI OCR Integration
-- Inspector Mobile API
+- Inspector Web Portal API
 - QR Code Verification
 - Payment Management
 - Notification System

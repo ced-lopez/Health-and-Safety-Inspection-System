@@ -68,6 +68,16 @@ export async function resendVerification(payload) {
   return data;
 }
 
+export async function requestPasswordReset(email) {
+  const { data } = await api.post("/v1/auth/forgot-password", { email });
+  return data;
+}
+
+export async function resetPassword(payload) {
+  const { data } = await api.post("/v1/auth/reset-password", payload);
+  return data;
+}
+
 export async function logout() {
   const token = getStoredToken();
 

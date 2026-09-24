@@ -14,6 +14,7 @@ class Violation extends Model
 
     protected $fillable = [
         'inspection_id',
+        'parent_violation_id',
         'establishment_id',
         'inspection_result_id',
         'reported_by',
@@ -38,6 +39,11 @@ class Violation extends Model
     public function inspection(): BelongsTo
     {
         return $this->belongsTo(Inspection::class);
+    }
+
+    public function parentViolation(): BelongsTo
+    {
+        return $this->belongsTo(self::class, 'parent_violation_id');
     }
 
     public function establishment(): BelongsTo

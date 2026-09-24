@@ -44,6 +44,7 @@ import {
   revokeCertificationDocument,
   updateCertificationDocument,
 } from '@/services/certificationService'
+import { fetchPayments } from '@/services/paymentService'
 
 const emptyForm = {
   document_kind: 'certification',
@@ -110,6 +111,8 @@ export default function CertificationsPage() {
   const [errors, setErrors] = useState({})
   const [submitting, setSubmitting] = useState(false)
   const [preview, setPreview] = useState(null)
+  const [clearancePaymentStatus, setClearancePaymentStatus] = useState(null)
+  const [clearancePaymentsLoading, setClearancePaymentsLoading] = useState(false)
 
   const canArchive = user?.role?.slug === 'administrator'
 
@@ -167,6 +170,32 @@ export default function CertificationsPage() {
       setDocuments(documentsQuery.data.data.documents ?? [])
     }
   }, [documentsQuery.data])
+
+  useEffect(() => {
+    async function checkClearanceFee() {
+      if (form.document_kind !== 'clearance' || !form.inspection_id) {
+        setClearancePaymentStatus(null)
+        return
+      }
+      const insp = inspections.find((i) => String(i.id) === String(form.inspection_id))
+      const reqId = insp?.inspection_request_id
+      if (!reqId) {
+        setClearancePaymentStatus(null)
+        return
+      }
+      setClearancePaymentsLoading(true)
+      try {
+        const res = await fetchPayments(reqId)
+        const d = res.data ?? res
+        setClearancePaymentStatus(d.payment_status ?? null)
+      } catch {
+        setClearancePaymentStatus(null)
+      } finally {
+        setClearancePaymentsLoading(false)
+      }
+    }
+    checkClearanceFee()
+  }, [form.document_kind, form.inspection_id, inspections])
 
   const loading = documentsQuery.isLoading && documents.length === 0
 
@@ -643,6 +672,22 @@ export default function CertificationsPage() {
               )}
             </div>
 
+            {form.document_kind === 'clearance' && form.inspection_id && (
+              <div className="rounded-lg border px-3 py-2 text-xs">
+                {clearancePaymentsLoading ? (
+                  <span className="text-muted-foreground">Checking clearance fee...</span>
+                ) : clearancePaymentStatus ? (
+                  clearancePaymentStatus.clearance_fee_paid ? (
+                    <span className="text-green-700 dark:text-green-300">✓ Clearance fee confirmed paid — QR and clearance generation allowed.</span>
+                  ) : (
+                    <span className="text-amber-700 dark:text-amber-300">Clearance fee is pending for the linked inspection’s request. Clearance / QR generation is blocked until it’s confirmed paid (staff must record the clearance fee payment there).</span>
+                  )
+                ) : (
+                  <span className="text-muted-foreground">Clearance fee status unavailable for this inspection.</span>
+                )}
+              </div>
+            )}
+
             <DialogFooter>
               <Button
                 type="button"
@@ -651,7 +696,7 @@ export default function CertificationsPage() {
               >
                 Cancel
               </Button>
-              <Button type="submit" disabled={submitting}>
+              <Button type="submit" disabled={submitting || (form.document_kind === 'clearance' && form.inspection_id && clearancePaymentStatus && !clearancePaymentStatus.clearance_fee_paid)}>
                 {submitting ? 'Saving...' : 'Save Document'}
               </Button>
             </DialogFooter>

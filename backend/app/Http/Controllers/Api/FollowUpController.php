@@ -4,11 +4,14 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Resources\InspectionRequestResource;
 use App\Models\InspectionRequest;
+use App\Notifications\Concerns\NotifiesRoles;
+use App\Notifications\FollowUpRequested;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 class FollowUpController extends BaseApiController
 {
+    use NotifiesRoles;
     public function index(Request $request): JsonResponse
     {
         $user = $request->user();
@@ -58,6 +61,11 @@ class FollowUpController extends BaseApiController
                 ? ($inspectionRequest->remarks ? $inspectionRequest->remarks."\n---\n".$validated['compliance_notes'] : $validated['compliance_notes'])
                 : $inspectionRequest->remarks,
         ]);
+
+        $this->notifyRoles(new FollowUpRequested(
+            $inspectionRequest->request_number,
+            $inspectionRequest->applicant_name,
+        ), ['administrator', 'barangay_staff']);
 
         return $this->success(
             new InspectionRequestResource($inspectionRequest->load([

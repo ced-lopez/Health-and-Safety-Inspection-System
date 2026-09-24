@@ -69,18 +69,15 @@ class InspectionTaxonomySeeder extends Seeder
         $categoryIds = DB::table('inspection_categories')->pluck('id', 'slug');
         $typeIds = DB::table('application_types')->pluck('id', 'slug');
 
+        // Whitelist: only Valid Government ID and Proof of Residency Clearance remain active.
+        // Barangay ID is removed per request; proof_of_location is renamed to Proof of Residency Clearance.
         $coreRequirements = [
             ['documentType' => 'government_id', 'documentName' => 'Valid Government-Issued ID', 'requiresExpirationCheck' => false],
-            ['documentType' => 'cedula', 'documentName' => 'Community Tax Certificate (Cedula)', 'requiresExpirationCheck' => false],
-            ['documentType' => 'proof_of_location', 'documentName' => 'Proof of Business/Residency Location', 'requiresExpirationCheck' => false],
-            ['documentType' => 'vicinity_map', 'documentName' => 'Sketch / Vicinity Map', 'requiresExpirationCheck' => false],
-            ['documentType' => 'barangay_id', 'documentName' => 'Barangay ID', 'requiresExpirationCheck' => false],
+            ['documentType' => 'proof_of_location', 'documentName' => 'Proof of Residency Clearance', 'requiresExpirationCheck' => false],
         ];
 
-        $renewalRequirements = [
-            ['documentType' => 'previous_clearance', 'documentName' => 'Previous Health and Safety Clearance', 'requiresExpirationCheck' => false],
-            ['documentType' => 'business_permit', 'documentName' => 'Business Permit', 'requiresExpirationCheck' => true],
-        ];
+        // Archived: cedula, vicinity_map, previous_clearance and other legacy types are intentionally excluded.
+        $renewalRequirements = [];
 
         foreach ($categoryIds as $categoryId) {
             foreach ($coreRequirements as $requirement) {
@@ -118,8 +115,16 @@ class InspectionTaxonomySeeder extends Seeder
             }
         }
 
-        // Category-specific requirements.
-        $this->seedCategoryRequirements($categoryIds, $typeIds, $now);
+        // Category-specific requirements are archived: resident application now only requires
+        // government_id + proof_of_location. No extra category docs are seeded.
+        // Existing category-specific rules will be archived by migration 2026_09_25_archive_other_documents.
+        // $this->seedCategoryRequirements($categoryIds, $typeIds, $now);
+
+        // Clean up any previously seeded non-whitelisted rules (archive them) when seeder re-runs.
+        // Also renames proof_of_location display name to Proof of Residency Clearance.
+        $whitelisted = ['government_id', 'proof_of_location'];
+        DB::table('document_requirement_rules')->whereNotIn('document_type', $whitelisted)->delete();
+        DB::table('document_requirement_rules')->where('document_type', 'proof_of_location')->update(['document_name' => 'Proof of Residency Clearance']);
     }
 
     private function seedCategoryRequirements(Collection $categoryIds, Collection $typeIds, mixed $now): void
@@ -144,6 +149,16 @@ class InspectionTaxonomySeeder extends Seeder
                     now: $now
                 );
             }
+
+            $this->upsertRequirement(
+                inspectionCategoryId: $categoryIds['business_establishments'],
+                applicationTypeId: $typeIds['renewal'],
+                subPath: null,
+                documentType: 'business_permit',
+                documentName: 'Business Permit',
+                requiresExpirationCheck: true,
+                now: $now
+            );
         }
 
         // Dog raising — two paths.

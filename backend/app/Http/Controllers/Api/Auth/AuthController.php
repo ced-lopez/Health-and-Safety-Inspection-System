@@ -94,13 +94,14 @@ class AuthController extends BaseApiController
             'verification_attempts' => 0,
         ]);
 
-        $token = $user->createToken('auth-token')->plainTextToken;
+        $token = $this->createTokenForUser($user);
 
         $this->logAuthEvent($user, 'verified', $request);
 
         return $this->success([
             'token' => $token,
             'user' => new UserResource($user->load('role')),
+            'role' => $user->role?->slug,
         ], 'Verification successful');
     }
 
@@ -148,26 +149,20 @@ class AuthController extends BaseApiController
 
         $user->loadMissing('role');
 
-        // Enforce portal separation: residents sign in through /login, while
-        // administrators, barangay staff, and inspectors sign in through /admin/login.
-        $portal = $request->validated('portal');
-        $roleSlug = $user->role?->slug;
-
-        if ($portal === 'resident' && $roleSlug !== 'resident') {
-            throw ValidationException::withMessages([
-                'email' => ['This account is an internal account. Barangay personnel must sign in through the internal portal.'],
-            ]);
-        }
-
-        if ($portal === 'staff' && $roleSlug === 'resident') {
-            throw ValidationException::withMessages([
-                'email' => ['This account is a resident. Residents must sign in through the resident portal.'],
-            ]);
-        }
-
-        // Resident accounts must confirm a fresh verification code on every login,
-        // whether or not their email was previously verified.
+        // Resident OTP is throttled to 1 day: if they verified within last 24h, skip OTP on re-login.
         if ($user->role?->slug === 'resident') {
+            if ($user->email_verified_at && $user->email_verified_at->gt(now()->subDay())) {
+                $token = $this->createTokenForUser($user);
+                $this->logAuthEvent($user, 'login', $request);
+
+                return $this->success([
+                    'token' => $token,
+                    'user' => new UserResource($user->load('role')),
+                    'role' => $user->role?->slug,
+                    'verification_required' => false,
+                ], 'Login successful');
+            }
+
             $channel = $user->verification_channel ?? 'email';
 
             $this->issueVerificationCode($user, $channel);
@@ -177,6 +172,7 @@ class AuthController extends BaseApiController
 
             return $this->success([
                 'user' => new UserResource($user),
+                'role' => $user->role?->slug,
                 'verification_required' => true,
                 'verification_channel' => $channel,
                 'email' => $user->email,
@@ -193,6 +189,7 @@ class AuthController extends BaseApiController
 
             return $this->success([
                 'user' => new UserResource($user),
+                'role' => $user->role?->slug,
                 'verification_required' => true,
                 'verification_channel' => $channel,
                 'email' => $user->email,
@@ -200,13 +197,14 @@ class AuthController extends BaseApiController
         }
 
         $user->load('role');
-        $token = $user->createToken('auth-token')->plainTextToken;
+        $token = $this->createTokenForUser($user);
 
         $this->logAuthEvent($user, 'login', $request);
 
         return $this->success([
             'token' => $token,
             'user' => new UserResource($user),
+            'role' => $user->role?->slug,
         ], 'Login successful');
     }
 
@@ -264,6 +262,8 @@ class AuthController extends BaseApiController
             'password' => $validated['password'],
         ]);
 
+        $request->user()->tokens()->delete();
+
         AuditLogger::log(
             $request->user(),
             'Authentication',
@@ -275,6 +275,32 @@ class AuthController extends BaseApiController
         );
 
         return $this->success(null, 'Password changed successfully');
+    }
+
+    private function createTokenForUser(User $user): string
+    {
+        $user->loadMissing('role');
+
+        $isStaffType = $user->hasRole('administrator', 'barangay_staff', 'inspector');
+
+        if ($isStaffType) {
+            $user->tokens()->delete();
+
+            $expirationMinutes = (int) config('sanctum.staff_expiration', 480);
+        } else {
+            $expirationMinutes = (int) config('sanctum.expiration', 43200);
+
+            $tokenCount = $user->tokens()->count();
+
+            if ($tokenCount >= 3) {
+                $toDelete = $tokenCount - 2;
+                $user->tokens()->orderBy('created_at')->limit($toDelete)->delete();
+            }
+        }
+
+        $expiresAt = $expirationMinutes > 0 ? now()->addMinutes($expirationMinutes) : null;
+
+        return $user->createToken('auth-token', ['*'], $expiresAt)->plainTextToken;
     }
 
     private function issueVerificationCode(User $user, string $channel): void

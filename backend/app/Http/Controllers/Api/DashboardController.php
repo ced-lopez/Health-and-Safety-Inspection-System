@@ -8,7 +8,6 @@ use App\Models\Establishment;
 use App\Models\Inspection;
 use App\Models\InspectionAssignment;
 use App\Models\InspectionRequest;
-use App\Models\MobileSyncRecord;
 use App\Models\User;
 use App\Models\Violation;
 use Illuminate\Http\JsonResponse;
@@ -331,11 +330,6 @@ class DashboardController extends BaseApiController
             ->whereIn('status', $followUpStatuses)
             ->count();
 
-        $pendingSyncCount = MobileSyncRecord::query()
-            ->where('inspector_id', $user->id)
-            ->where('status', 'pending')
-            ->count();
-
         $assignedInspections = InspectionAssignment::query()
             ->where('inspector_id', $user->id)
             ->whereIn('status', $activeStatuses)
@@ -385,33 +379,16 @@ class DashboardController extends BaseApiController
                 'updated_at' => $request->updated_at?->format('M d, Y') ?? 'N/A',
             ])->values();
 
-        $lastSync = MobileSyncRecord::query()
-            ->where('inspector_id', $user->id)
-            ->whereNotNull('processed_at')
-            ->orderByDesc('processed_at')
-            ->first();
-
-        $unsyncedAssignments = InspectionAssignment::query()
-            ->where('inspector_id', $user->id)
-            ->where('status', 'downloaded')
-            ->count();
-
         return [
             'stats' => [
                 'assigned' => $assignedCount,
                 'in_progress' => $inProgressCount,
                 'completed' => $completedCount,
                 'follow_ups' => $followUpCount,
-                'pending_sync' => $pendingSyncCount,
             ],
             'assigned_inspections' => $assignedInspections,
             'inspection_history' => $inspectionHistory,
             'follow_ups' => $followUps,
-            'sync' => [
-                'last_synced_at' => $lastSync?->processed_at?->toIso8601String(),
-                'pending_count' => $pendingSyncCount,
-                'unsynced_assignments' => $unsyncedAssignments,
-            ],
         ];
     }
 

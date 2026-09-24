@@ -136,6 +136,9 @@ class AdminUserController extends BaseApiController
             return $this->error('Role not found', 404);
         }
 
+        $wasActive = (bool) $user->is_active;
+        $passwordChanged = ! empty($data['password']);
+
         $user->update([
             'name' => $data['name'] ?? $user->name,
             'email' => $data['email'] ?? $user->email,
@@ -144,8 +147,12 @@ class AdminUserController extends BaseApiController
             'is_active' => $data['is_active'],
         ]);
 
-        if (! empty($data['password'])) {
+        if ($passwordChanged) {
             $user->update(['password' => Hash::make($data['password'])]);
+        }
+
+        if (($wasActive && ! $data['is_active']) || $passwordChanged) {
+            $user->tokens()->delete();
         }
 
         $user->load('role');

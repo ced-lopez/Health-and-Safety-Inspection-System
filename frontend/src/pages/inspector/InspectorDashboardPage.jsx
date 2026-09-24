@@ -233,6 +233,7 @@ export default function InspectorDashboardPage() {
   const [selectedId, setSelectedId] = useState(null)
   const [violationOpen, setViolationOpen] = useState(false)
   const [submitOpen, setSubmitOpen] = useState(false)
+  const [submissionOutcome, setSubmissionOutcome] = useState('compliant')
 
   const [results, setResults] = useState({})
   const [itemRemarks, setItemRemarks] = useState({})
@@ -324,7 +325,7 @@ export default function InspectorDashboardPage() {
   })
 
   const submitMutation = useMutation({
-    mutationFn: () => submitAssignment(selectedId, { notes: inspectorNotes }),
+    mutationFn: () => submitAssignment(selectedId, { notes: inspectorNotes, outcome: submissionOutcome }),
     onSuccess: () => {
       toast.success('Inspection submitted for review')
       setSubmitOpen(false)
@@ -433,12 +434,6 @@ export default function InspectorDashboardPage() {
       description: 'Requiring attention',
       icon: RefreshCw,
     },
-    {
-      title: 'Pending Sync',
-      value: data?.stats?.pending_sync,
-      description: 'Unsynced mobile records',
-      icon: AlertTriangle,
-    },
   ]
 
   const categories = useMemo(
@@ -487,8 +482,6 @@ export default function InspectorDashboardPage() {
     })
   }, [data, historySearch])
 
-  const sync = data?.sync ?? {}
-  const isSynced = !sync.pending_count && !sync.unsynced_assignments
   const canStart = selected && (selected.status === 'assigned' || selected.status === 'downloaded')
   const canSubmit = selected?.status === 'in_progress'
   const checklistLoading = checklistQuery.isLoading
@@ -517,21 +510,9 @@ export default function InspectorDashboardPage() {
             Welcome back, {user?.name?.split(' ')[0] ?? 'Inspector'} &middot; manage your assigned inspections
           </p>
         </div>
-        <Badge
-          variant={isSynced ? 'default' : 'secondary'}
-          className="gap-1.5 rounded-md px-2.5 py-1"
-        >
-          <RefreshCw className="size-3" />
-          {isSynced ? 'All synced' : `${(sync.pending_count ?? 0) + (sync.unsynced_assignments ?? 0)} pending sync`}
-          {sync.last_synced_at && (
-            <span className="ml-1 text-[0.65rem] opacity-75">
-              &middot; {new Date(sync.last_synced_at).toLocaleString()}
-            </span>
-          )}
-        </Badge>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {statsList.map((stat) => (
           <StatCard
             key={stat.title}
@@ -1106,6 +1087,14 @@ export default function InspectorDashboardPage() {
               {selected?.business_name || selected?.establishment_name || 'the establishment'}.
             </DialogDescription>
           </DialogHeader>
+          <div className="space-y-2">
+            <Label>Inspection Outcome</Label>
+            <div className="grid grid-cols-2 gap-2">
+              <Button type="button" variant={submissionOutcome === 'compliant' ? 'default' : 'outline'} onClick={() => setSubmissionOutcome('compliant')}>Compliant</Button>
+              <Button type="button" variant={submissionOutcome === 'not_compliant' ? 'destructive' : 'outline'} onClick={() => setSubmissionOutcome('not_compliant')}>Not Compliant</Button>
+            </div>
+            <p className="text-xs text-muted-foreground">Compliant inspections create a pending clearance fee. Non-compliant inspections immediately issue a seven-day violation notice.</p>
+          </div>
           <div className="space-y-3">
             <div>
               <Label className="text-xs text-muted-foreground">Title</Label>

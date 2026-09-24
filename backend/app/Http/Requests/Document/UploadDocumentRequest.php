@@ -13,8 +13,10 @@ class UploadDocumentRequest extends FormRequest
 
     public function rules(): array
     {
+        // Resident application: only whitelisted documents are allowed (barangay_id removed).
+        // Others are archived and should be rejected with a clear message.
         return [
-            'document_type' => ['required', 'string', 'max:100'],
+            'document_type' => ['required', 'string', 'max:100', 'in:government_id,proof_of_location'],
             'file' => [
                 'required',
                 'file',

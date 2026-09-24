@@ -3,8 +3,10 @@ import {
   Award,
   Download,
   Eye,
+  QrCode,
   Link2,
   Loader2,
+  Printer,
   RefreshCw,
   Search,
   Store,
@@ -73,6 +75,7 @@ export default function ClearancePage() {
   const [unclaimedSearch, setUnclaimedSearch] = useState("");
   const [claimingId, setClaimingId] = useState(null);
   const [downloadingId, setDownloadingId] = useState(null);
+  const [downloadingQrCardId, setDownloadingQrCardId] = useState(null);
 
   const { data, isError, isLoading } = useQuery({
     queryKey: ["my-clearances"],
@@ -135,6 +138,57 @@ export default function ClearancePage() {
       toast.error(error.message || "Unable to download the clearance");
     } finally {
       setDownloadingId(null);
+    }
+  }
+
+  async function handleQrCardDownload(clearance, format = "wallet") {
+    setDownloadingQrCardId(clearance.id);
+    try {
+      const response = await api.get(
+        `/v1/my/clearances/${clearance.id}/qr-card`,
+        { params: { format }, responseType: "blob" },
+      );
+      const contentType = response.headers["content-type"] || "";
+      if (contentType.includes("application/json")) {
+        throw new Error("Not allowed to download this QR-only card");
+      }
+      const url = URL.createObjectURL(response.data);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `clearance-qr-card-${clearance.number ?? clearance.id}-${format}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      toast.error(error.message || "Unable to download the QR-only card");
+    } finally {
+      setDownloadingQrCardId(null);
+    }
+  }
+
+  async function handlePrint(clearance) {
+    // The server-rendered PDF uses an A4 page, so printing it preserves the
+    // certificate layout and excludes the application shell/navigation.
+    const printWindow = window.open("", "_blank");
+    if (!printWindow) {
+      toast.error("Please allow pop-ups to print this clearance");
+      return;
+    }
+
+    try {
+      const response = await api.get(`/v1/my/clearances/${clearance.id}/pdf`, {
+        responseType: "blob",
+      });
+      const url = URL.createObjectURL(response.data);
+      printWindow.location.href = url;
+      printWindow.addEventListener("load", () => {
+        printWindow.print();
+        URL.revokeObjectURL(url);
+      }, { once: true });
+    } catch (error) {
+      printWindow.close();
+      toast.error(error.message || "Unable to prepare the clearance for printing");
     }
   }
 
@@ -288,6 +342,20 @@ export default function ClearancePage() {
                         <Button
                           variant="outline"
                           size="icon-sm"
+                          title="Download QR-Only Card"
+                          aria-label="Download QR-Only Card"
+                          onClick={() => handleQrCardDownload(c)}
+                          disabled={downloadingQrCardId === c.id}
+                        >
+                          {downloadingQrCardId === c.id ? (
+                            <Loader2 className="size-4 animate-spin" />
+                          ) : (
+                            <QrCode className="size-4" />
+                          )}
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="icon-sm"
                           onClick={() => handleDownload(c)}
                           disabled={downloadingId === c.id}
                         >
@@ -391,7 +459,23 @@ export default function ClearancePage() {
                   onClick={() => handleDownload(preview)}
                 >
                   <Download className="size-4" />
-                  Download PDF
+                  Download Full Clearance (PDF)
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => handleQrCardDownload(preview)}
+                  disabled={downloadingQrCardId === preview.id}
+                >
+                  {downloadingQrCardId === preview.id ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : (
+                    <QrCode className="size-4" />
+                  )}
+                  Download QR-Only Card
+                </Button>
+                <Button variant="outline" onClick={() => handlePrint(preview)}>
+                  <Printer className="size-4" />
+                  Print
                 </Button>
               </DialogFooter>
             </>

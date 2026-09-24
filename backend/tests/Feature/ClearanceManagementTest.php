@@ -134,7 +134,7 @@ class ClearanceManagementTest extends TestCase
         ]);
     }
 
-    public function test_clearance_verification_after_revocation_fails(): void
+    public function test_clearance_verification_after_revocation_returns_revoked_status(): void
     {
         $clearance = $this->makeClearance();
         $qr = $clearance->qrCode()->create(['code' => 'CLR-VER-0001', 'is_active' => true]);
@@ -143,7 +143,9 @@ class ClearanceManagementTest extends TestCase
             ->postJson("/api/v1/certifications/clearance/{$clearance->id}/revoke")
             ->assertStatus(200);
 
-        $this->getJson('/api/v1/verify/CLR-VER-0001')->assertStatus(404);
+        $this->getJson('/api/v1/verify/CLR-VER-0001')
+            ->assertOk()
+            ->assertJsonPath('data.document.status', 'revoked');
     }
 
     public function test_expiration_command_marks_overdue_clearances(): void

@@ -15,12 +15,16 @@ use App\Notifications\Concerns\NotifiesRoles;
 use App\Notifications\ViolationFiled;
 use App\Notifications\ViolationNotice;
 use App\Services\AuditLogger;
+use App\Services\DocumentPdfService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Symfony\Component\HttpFoundation\Response;
 
 class ViolationController extends BaseApiController
 {
     use NotifiesRoles;
+
+    public function __construct(private readonly DocumentPdfService $pdfService) {}
 
     public function index(Request $request): JsonResponse
     {
@@ -152,6 +156,14 @@ class ViolationController extends BaseApiController
             new ViolationResource($this->loadViolation($violation)),
             'Violation details retrieved successfully'
         );
+    }
+
+    public function pdf(Violation $violation): Response
+    {
+        $violation = $this->loadViolation($violation);
+
+        return $this->pdfService->violationNoticePdf($violation)
+            ->stream('violation-notice-'.$violation->id.'.pdf');
     }
 
     public function update(UpdateViolationRequest $request, Violation $violation): JsonResponse

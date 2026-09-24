@@ -17,9 +17,13 @@ Thumbs.db
 # AI / agent scratch files
 .agents/
 
-# Private requirement prompts
+# Private requirement prompts (don't push)
 UPDATED PROMPT.txt
 *.prompt.txt
+/*.txt
+/#*.txt
+/Here*.txt
+# Future Phase / System Development prompts
 
 # Internal documentation
 docs/
@@ -49,14 +53,6 @@ node_modules/
 # React / Vite
 /frontend/dist/
 /frontend/.vite/
-
-# Flutter
-/mobile/.dart_tool/
-/mobile/.packages
-/mobile/build/
-/mobile/.flutter-plugins
-/mobile/.flutter-plugins-dependencies
-/mobile/.pub-cache/
 
 # Coverage
 coverage/

@@ -308,6 +308,7 @@ export default function UsersPage() {
             <TableRow>
               <TableHead>User</TableHead>
               <TableHead>Role</TableHead>
+              <TableHead>Office / Unit</TableHead>
               <TableHead className="w-32">Status</TableHead>
               <TableHead className="w-24 text-right">Actions</TableHead>
             </TableRow>
@@ -352,6 +353,15 @@ export default function UsersPage() {
                       </option>
                     ))}
                   </select>
+                </TableCell>
+
+                <TableCell>
+                  <span className="text-sm">
+                    {["administrator", "barangay_staff", "inspector"].includes(u.role?.slug) ? "Barangay 178" : u.role?.slug === "resident" ? "Public" : "N/A"}
+                  </span>
+                  <div className="text-xs text-muted-foreground">
+                    {["administrator", "barangay_staff", "inspector"].includes(u.role?.slug) ? "Caloocan City" : "Resident Applicant"}
+                  </div>
                 </TableCell>
 
                 <TableCell>

@@ -135,9 +135,14 @@ class InspectionApplicationFlowTest extends TestCase
 
     public function test_document_requirements_are_sub_path_scoped(): void
     {
+        // Resident upload now whitelisted to only government_id + proof_of_location (Proof of Residency Clearance).
+        // Barangay ID and other documents (cedula, vicinity_map, pet_registration_form, etc.) are archived.
         $piggeryId = InspectionCategory::where('slug', 'piggery')->firstOrFail()->id;
         $dogId = InspectionCategory::where('slug', 'animal_raising_dogs')->firstOrFail()->id;
+        $businessId = InspectionCategory::where('slug', 'business_establishments')->firstOrFail()->id;
         $appTypeId = ApplicationType::where('slug', 'new_application')->firstOrFail()->id;
+
+        $whitelist = ['government_id', 'proof_of_location'];
 
         $dogHousehold = $this->actingAs($this->resident, 'sanctum')
             ->getJson('/api/v1/inspection-requests/document-requirements?'.http_build_query([
@@ -149,10 +154,11 @@ class InspectionApplicationFlowTest extends TestCase
             ->json('data.requirements');
 
         $dogTypes = array_column($dogHousehold, 'document_type');
-        $this->assertContains('pet_registration_form', $dogTypes);
-        $this->assertContains('rabies_certificate', $dogTypes);
+        $this->assertEqualsCanonicalizing($whitelist, $dogTypes);
+        $this->assertNotContains('pet_registration_form', $dogTypes);
+        $this->assertNotContains('rabies_certificate', $dogTypes);
         $this->assertNotContains('bai_registration', $dogTypes);
-        $this->assertNotContains('neighbor_waiver', $dogTypes);
+        $this->assertNotContains('cedula', $dogTypes);
 
         $piggery = $this->actingAs($this->resident, 'sanctum')
             ->getJson('/api/v1/inspection-requests/document-requirements?'.http_build_query([
@@ -164,14 +170,23 @@ class InspectionApplicationFlowTest extends TestCase
             ->json('data.requirements');
 
         $piggeryTypes = array_column($piggery, 'document_type');
-        $this->assertContains('zoning_assessment', $piggeryTypes);
-        $this->assertContains('waste_management_plan', $piggeryTypes);
-        $this->assertContains('neighbor_waiver', $piggeryTypes);
+        $this->assertEqualsCanonicalizing($whitelist, $piggeryTypes);
+        $this->assertNotContains('zoning_assessment', $piggeryTypes);
+        $this->assertNotContains('waste_management_plan', $piggeryTypes);
 
-        $coreRequired = array_filter($piggeryTypes, fn ($type) => in_array($type, [
-            'government_id', 'cedula', 'proof_of_location', 'vicinity_map',
-        ], true));
-        $this->assertNotEmpty($coreRequired);
+        $business = $this->actingAs($this->resident, 'sanctum')
+            ->getJson('/api/v1/inspection-requests/document-requirements?'.http_build_query([
+                'inspection_category_id' => $businessId,
+                'application_type_id' => $appTypeId,
+            ]))
+            ->assertStatus(200)
+            ->json('data.requirements');
+
+        $businessTypes = array_column($business, 'document_type');
+        $this->assertEqualsCanonicalizing($whitelist, $businessTypes);
+
+        $coreRequired = array_filter($piggeryTypes, fn ($type) => in_array($type, $whitelist, true));
+        $this->assertCount(2, $coreRequired);
     }
 
     public function test_blocked_attempt_is_logged_without_creating_request(): void
@@ -244,14 +259,20 @@ class InspectionApplicationFlowTest extends TestCase
 
     public function test_wizard_request_never_creates_establishment(): void
     {
+        // Now autolinked: wizard auto-creates establishment from request data
         $response = $this->actingAs($this->resident, 'sanctum')
             ->postJson('/api/v1/inspection-requests', $this->payload());
 
         $response->assertStatus(201);
         $request = InspectionRequest::query()->findOrFail($response->json('data.id'));
 
-        $this->assertNull($request->establishment_id);
-        $this->assertDatabaseCount('establishments', 0);
+        $this->assertNotNull($request->establishment_id);
+        $this->assertDatabaseCount('establishments', 1);
+        $this->assertDatabaseHas('establishments', [
+            'id' => $request->establishment_id,
+            'resident_id' => $this->resident->id,
+            'ownership_status' => 'linked',
+        ]);
 
         $staff = User::query()->create([
             'role_id' => Role::where('slug', 'barangay_staff')->firstOrFail()->id,
@@ -269,25 +290,29 @@ class InspectionApplicationFlowTest extends TestCase
             ->assertJsonPath('data.status', 'approved_for_inspection');
 
         $request->refresh();
-        $this->assertNull($request->establishment_id);
-        $this->assertDatabaseCount('establishments', 0);
+        $this->assertNotNull($request->establishment_id);
+        $this->assertDatabaseCount('establishments', 1);
     }
 
     public function test_repeated_applications_do_not_create_establishments(): void
     {
-        $this->actingAs($this->resident, 'sanctum')
+        // Repeated applications with same business_name/address reuse the same establishment (no duplicate)
+        $first = $this->actingAs($this->resident, 'sanctum')
             ->postJson('/api/v1/inspection-requests', $this->payload([
                 'business_name' => 'Dela Cruz Piggery',
             ]))
-            ->assertStatus(201);
+            ->assertStatus(201)
+            ->json('data');
 
-        $this->actingAs($this->resident, 'sanctum')
+        $second = $this->actingAs($this->resident, 'sanctum')
             ->postJson('/api/v1/inspection-requests', $this->payload([
                 'business_name' => 'Dela Cruz Piggery',
             ]))
-            ->assertStatus(201);
+            ->assertStatus(201)
+            ->json('data');
 
-        $this->assertDatabaseCount('establishments', 0);
+        $this->assertSame($first['establishment']['id'], $second['establishment']['id']);
+        $this->assertDatabaseCount('establishments', 1);
     }
 
     public function test_explicit_establishment_is_not_auto_created(): void

@@ -39,3 +39,14 @@ export async function uploadViolationEvidence(id, payload) {
 
   return data
 }
+
+export function violationNoticePdfUrl(id) {
+  return `/v1/violations/${id}/pdf`
+}
+
+export async function downloadViolationNoticePdf(id) {
+  const { data } = await api.get(violationNoticePdfUrl(id), {
+    responseType: 'blob',
+  })
+  return data
+}

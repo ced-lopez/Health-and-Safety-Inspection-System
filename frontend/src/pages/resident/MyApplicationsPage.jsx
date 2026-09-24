@@ -12,6 +12,8 @@ import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { fetchInspectionRequests, fetchInspectionRequest, fetchRequestDocuments, fetchRequestDocumentFile, uploadRequestDocument, setPreferredSchedule, clearPreferredSchedule } from '@/services/inspectionRequestService'
+import { fetchPayments } from '@/services/paymentService'
+import PaymentSection from '@/components/payments/PaymentSection'
 
 const statusLabels = {
   draft: 'Draft',
@@ -108,6 +110,10 @@ export default function MyApplicationsPage() {
   const [scheduleTime, setScheduleTime] = useState('')
   const [scheduleSubmitting, setScheduleSubmitting] = useState(false)
   const [scheduleClearing, setScheduleClearing] = useState(false)
+  const [payments, setPayments] = useState([])
+  const [feeSchedule, setFeeSchedule] = useState(null)
+  const [paymentStatus, setPaymentStatus] = useState(null)
+  const [paymentsLoading, setPaymentsLoading] = useState(false)
 
   const queryParams = useMemo(() => ({
     search: filters.search || undefined,
@@ -139,10 +145,24 @@ export default function MyApplicationsPage() {
 
   const loading = isLoading && requests.length === 0
 
+  async function loadPayments(requestId) {
+    setPaymentsLoading(true)
+    try {
+      const res = await fetchPayments(requestId)
+      const d = res.data ?? res
+      setPayments(d.payments ?? [])
+      setFeeSchedule(d.fee_schedule ?? null)
+      setPaymentStatus(d.payment_status ?? null)
+    } catch { /* ignore */ } finally { setPaymentsLoading(false) }
+  }
+
   async function openDetail(request) {
     setSelectedRequest(request)
     setDetailOpen(true)
     setDetailLoading(true)
+    setPayments([])
+    setFeeSchedule(null)
+    setPaymentStatus(request.payment_status ?? null)
     try {
       const [detailRes, docRes] = await Promise.all([
         fetchInspectionRequest(request.id),
@@ -150,9 +170,12 @@ export default function MyApplicationsPage() {
       ])
       const detail = detailRes.data ?? detailRes
       setSelectedRequest(detail)
+      if (detail.payment_status) setPaymentStatus(detail.payment_status)
+      if (detail.payments) setPayments(detail.payments)
       setScheduleDate(toDateInput(detail.preferred_schedule_at))
       setScheduleTime(toTimeInput(detail.preferred_schedule_at))
       setDocuments(docRes.data?.documents ?? docRes ?? [])
+      loadPayments(detail.id ?? request.id)
     } catch { toast.error('Unable to load application details') } finally {
       setDetailLoading(false)
     }
@@ -264,6 +287,7 @@ export default function MyApplicationsPage() {
                   <TableHead>Category</TableHead>
                   <TableHead>Date</TableHead>
                   <TableHead>Status</TableHead>
+                  <TableHead>Payment</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -280,6 +304,12 @@ export default function MyApplicationsPage() {
                     <TableCell>{formatDate(req.created_at ?? req.submitted_at)}</TableCell>
                     <TableCell>
                       <Badge variant={statusVariant(req.status)}>{statusLabels[req.status] ?? req.status}</Badge>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex flex-col gap-1 text-xs">
+                        <Badge variant={req.payment_status?.application_fee_paid ? 'default' : 'outline'} className="w-fit">App: {req.payment_status?.application_fee_paid ? 'Paid' : 'Pending'}</Badge>
+                        <Badge variant={req.payment_status?.clearance_fee_paid ? 'default' : 'outline'} className="w-fit">Clr: {req.payment_status?.clearance_fee_paid ? 'Paid' : 'Pending'}</Badge>
+                      </div>
                     </TableCell>
                     <TableCell className="text-right">
                       <Button variant="outline" size="icon-sm" onClick={() => openDetail(req)}>
@@ -322,6 +352,18 @@ export default function MyApplicationsPage() {
                 <div><p className="text-xs text-muted-foreground">Status</p><p className="font-medium"><Badge variant={statusVariant(selectedRequest.status)}>{statusLabels[selectedRequest.status] ?? selectedRequest.status}</Badge></p></div>
                 <div className="sm:col-span-2"><p className="text-xs text-muted-foreground">Address</p><p className="font-medium">{selectedRequest.applicant_address ?? 'N/A'}</p></div>
                 <div className="sm:col-span-2"><p className="text-xs text-muted-foreground">Notes / Remarks</p><p className="font-medium">{selectedRequest.remarks ?? 'None'}</p></div>
+              </div>
+
+              <div className="border-t pt-4">
+                <PaymentSection
+                  requestId={selectedRequest.id}
+                  paymentStatus={paymentStatus ?? selectedRequest.payment_status}
+                  payments={payments.length ? payments : (selectedRequest.payments ?? [])}
+                  feeSchedule={feeSchedule}
+                  loading={paymentsLoading}
+                  onRefresh={() => loadPayments(selectedRequest.id)}
+                  canRecord={false}
+                />
               </div>
 
               <div className="border-t pt-4">

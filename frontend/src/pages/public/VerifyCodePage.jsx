@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { verifyQrCode } from '@/services/certificationService'
+import barangayLogo from '@/assets/brgy178logo.jpg'
 
 function formatDate(value) {
   if (!value) return 'N/A'
@@ -17,13 +18,13 @@ function formatDate(value) {
 function statusMeta(status) {
   switch (status) {
     case 'active':
-      return { label: 'Valid Document', variant: 'default', icon: BadgeCheck, note: 'This document is active and valid.' }
+      return { label: 'VALID', variant: 'default', icon: BadgeCheck, note: 'This clearance is active and valid.' }
     case 'pending':
-      return { label: 'Pending Approval', variant: 'secondary', icon: Clock, note: 'This document has been issued but is not yet approved.' }
+      return { label: 'PENDING', variant: 'secondary', icon: Clock, note: 'This clearance is pending approval.' }
     case 'revoked':
-      return { label: 'Revoked', variant: 'destructive', icon: Ban, note: 'This document has been revoked and is no longer valid.' }
+      return { label: 'REVOKED', variant: 'destructive', icon: Ban, note: 'This clearance has been revoked and is no longer valid.' }
     case 'expired':
-      return { label: 'Expired', variant: 'destructive', icon: Clock, note: 'This document has passed its expiration date.' }
+      return { label: 'EXPIRED', variant: 'destructive', icon: Clock, note: 'This clearance has passed its expiration date.' }
     default:
       return { label: 'Unknown Status', variant: 'outline', icon: ShieldAlert, note: 'The status of this document could not be determined.' }
   }
@@ -71,13 +72,18 @@ export default function VerifyCodePage() {
     <div className="flex min-h-[70vh] items-center justify-center p-6">
       <Card className="w-full max-w-xl">
         <CardHeader className="text-center">
+          <img
+            src={barangayLogo}
+            alt="Barangay 178 logo"
+            className="mx-auto mb-3 size-16 rounded-full object-cover"
+          />
           <div className="mx-auto mb-2">
             <Badge variant={meta.variant} className="gap-1.5 px-3 py-1">
               <meta.icon className="size-4" />
               {meta.label}
             </Badge>
           </div>
-          <CardTitle>Document Verification</CardTitle>
+          <CardTitle>Health &amp; Safety Clearance Verification</CardTitle>
           <CardDescription>
             {notFound
               ? 'The QR code provided does not match any issued document.'
@@ -98,14 +104,16 @@ export default function VerifyCodePage() {
             </div>
 
             <div className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
-              <Detail label="Document No." value={document.number} />
-              <Detail label="Document Type" value={document.document_type} />
-              <Detail label="Owner / Applicant" value={document.establishment?.owner_name} />
-              <Detail label="Business Name" value={document.establishment?.name} />
+              <Detail label="Clearance Number" value={document.number} />
+              <Detail label="Inspection Category" value={document.document_type} />
+              <Detail label="Applicant Name" value={document.establishment?.owner_name} />
+              {document.establishment?.name && <Detail label="Business / Establishment Name" value={document.establishment.name} />}
               <Detail label="Issue Date" value={formatDate(document.issue_date)} />
               <Detail label="Expiration Date" value={formatDate(document.expiration_date)} />
               <Detail label="Issuing Authority" value="Barangay 178, North Caloocan City" />
-              <Detail label="Issued By" value={document.issuer?.name} />
+            </div>
+            <div className="mt-4 rounded-md bg-muted/50 px-3 py-2 text-center text-xs text-muted-foreground">
+              Issued through the Barangay 178 Health &amp; Safety Inspection System · Barangay 178, North Caloocan City — Barangay-Level Administrative System
             </div>
           </CardContent>
         )}

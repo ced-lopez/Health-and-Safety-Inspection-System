@@ -20,7 +20,7 @@ class StoreViolationRequest extends FormRequest
             'title' => ['required', 'string', 'max:255'],
             'description' => ['required', 'string'],
             'severity' => ['required', 'in:minor,moderate,major'],
-            'status' => ['required', 'in:open,under_review,resolved'],
+            'status' => ['required', 'in:open,under_review,overdue,resolved'],
             'correction_deadline' => ['nullable', 'date'],
         ];
     }

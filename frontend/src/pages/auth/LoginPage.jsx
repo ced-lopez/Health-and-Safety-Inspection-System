@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -14,7 +14,6 @@ import {
   Card,
   CardContent,
   CardDescription,
-  CardFooter,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -40,6 +39,15 @@ export default function LoginPage() {
   const [submitting, setSubmitting] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
+  useEffect(() => {
+    if (location.state?.passwordReset) {
+      toast.success(
+        "Password reset successfully. Please sign in with your new password.",
+      );
+      navigate(location.pathname, { replace: true, state: null });
+    }
+  }, [location.pathname, location.state, navigate]);
+
   const form = useForm({
     resolver: zodResolver(loginSchema),
     defaultValues: {
@@ -52,7 +60,7 @@ export default function LoginPage() {
     setSubmitting(true);
 
     try {
-      const response = await login({ ...values, portal: "staff" });
+      const response = await login(values);
 
       if (response.data?.verification_required) {
         toast.info(
@@ -65,7 +73,7 @@ export default function LoginPage() {
       }
 
       toast.success("Welcome back!");
-      const roleSlug = response?.data?.user?.role?.slug;
+      const roleSlug = response?.data?.role || response?.data?.user?.role?.slug;
       const redirectTo =
         location.state?.from?.pathname || getHomePath(roleSlug);
       navigate(redirectTo, { replace: true });
@@ -93,6 +101,17 @@ export default function LoginPage() {
     <div className="flex min-h-svh items-center justify-center bg-background p-4">
       <Card className="w-full max-w-md">
         <CardHeader className="space-y-3 text-center">
+          <div className="space-y-1">
+            <p className="text-[0.65rem] font-semibold tracking-[0.18em] text-muted-foreground">
+              CALOOCAN CITY LOCAL GOVERNMENT
+            </p>
+            <p className="text-xs font-bold tracking-wide text-foreground">
+              BARANGAY 178
+            </p>
+            <p className="text-[0.7rem] text-muted-foreground">
+              Health and Safety Inspection System
+            </p>
+          </div>
           <div className="mx-auto flex size-20 items-center justify-center overflow-hidden rounded-full">
             <img
               src={brgyLogo}
@@ -102,7 +121,7 @@ export default function LoginPage() {
           </div>
           <CardTitle className="text-2xl">Sign In</CardTitle>
           <CardDescription>
-            For administrators, barangay staff, and inspectors
+            Sign in to access your Health and Safety Inspection System account
           </CardDescription>
         </CardHeader>
 
@@ -118,7 +137,7 @@ export default function LoginPage() {
                     <FormControl>
                       <Input
                         type="email"
-                        placeholder="admin@barangay178.gov.ph"
+                        placeholder="you@gmail.com"
                         autoComplete="email"
                         {...field}
                       />
@@ -166,16 +185,21 @@ export default function LoginPage() {
                 )}
               />
 
+              <div className="flex justify-end">
+                <Link
+                  to="/forgot-password"
+                  className="text-sm font-medium text-primary hover:underline"
+                >
+                  Forgot password?
+                </Link>
+              </div>
+
               <Button type="submit" className="w-full" disabled={submitting}>
                 {submitting ? "Signing in..." : "Sign In"}
               </Button>
             </form>
           </Form>
         </CardContent>
-
-        <CardFooter className="flex justify-center text-sm text-muted-foreground">
-          <p>Contact your administrator to request access.</p>
-        </CardFooter>
       </Card>
     </div>
   );

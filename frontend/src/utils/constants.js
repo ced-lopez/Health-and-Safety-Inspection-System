@@ -122,6 +122,13 @@ export const STAFF_NAV_ITEMS = [
     module: "inspection-requests",
   },
   {
+    title: "Payments",
+    href: "/payments",
+    icon: "Banknote",
+    module: "payments",
+    keywords: ["payment", "receipt", "OR", "fee", "clearance fee", "application fee"],
+  },
+  {
     title: "Inspections",
     href: "/inspections",
     icon: "ClipboardCheck",

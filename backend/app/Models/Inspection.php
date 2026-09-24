@@ -14,6 +14,7 @@ class Inspection extends Model
     protected $fillable = [
         'inspection_schedule_id',
         'inspection_request_id',
+        'follow_up_of_inspection_id',
         'establishment_id',
         'inspector_id',
         'inspection_date',
@@ -41,6 +42,11 @@ class Inspection extends Model
     public function inspectionRequest(): BelongsTo
     {
         return $this->belongsTo(InspectionRequest::class, 'inspection_request_id');
+    }
+
+    public function followUpOf(): BelongsTo
+    {
+        return $this->belongsTo(self::class, 'follow_up_of_inspection_id');
     }
 
     public function establishment(): BelongsTo
@@ -71,5 +77,10 @@ class Inspection extends Model
     public function clearances(): HasMany
     {
         return $this->hasMany(Clearance::class);
+    }
+
+    public function payments(): HasMany
+    {
+        return $this->hasMany(Payment::class);
     }
 }

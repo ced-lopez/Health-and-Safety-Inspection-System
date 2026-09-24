@@ -71,7 +71,7 @@ class DocumentFieldExtractor
 
         if (! $parsed) {
             return [
-                'is_expired' => false,
+                'is_expired' => null,
                 'expiration_found' => false,
                 'expiration_warning' => null,
             ];

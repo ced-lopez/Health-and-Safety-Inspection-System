@@ -56,3 +56,14 @@ export async function updateInspectionReport(scheduleId, payload) {
   )
   return data
 }
+
+export function inspectionReportPdfUrl(scheduleId) {
+  return `/v1/inspections/schedules/${scheduleId}/report/pdf`
+}
+
+export async function downloadInspectionReportPdf(scheduleId) {
+  const { data } = await api.get(inspectionReportPdfUrl(scheduleId), {
+    responseType: 'blob',
+  })
+  return data
+}

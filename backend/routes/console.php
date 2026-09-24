@@ -9,3 +9,4 @@ Artisan::command('inspire', function () {
 })->purpose('Display an inspiring quote');
 
 Schedule::command('documents:check-expiration')->daily();
+Schedule::command('violations:flag-overdue')->daily();

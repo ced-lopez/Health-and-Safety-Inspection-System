@@ -365,6 +365,7 @@ export default function CalendarPage() {
       scheduled_time: assignForm.time || null,
       status: 'scheduled',
       inspection_request_id: request.id,
+      schedule_type: request.status === 'follow_up_requested' ? 'follow_up' : 'initial',
     })
   }
 

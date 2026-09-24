@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
   AlertTriangle,
   Award,
+  Banknote,
   BarChart,
   Bell,
   Building2,
@@ -68,6 +69,7 @@ import brgyLogo from "@/assets/brgy178logo.jpg";
 const iconMap = {
   AlertTriangle,
   Award,
+  Banknote,
   BarChart,
   Bell,
   Building2,
@@ -96,6 +98,7 @@ const iconMap = {
 const DEFAULT_GROUP_MAP = {
   "/dashboard": "Overview",
   "/inspection-requests": "Operations",
+  "/payments": "Operations",
   "/establishments": "Operations",
   "/inspections": "Operations",
   "/scheduling": "Operations",
@@ -270,9 +273,8 @@ export function AppSidebar({ unassignedCount } = {}) {
 
   async function handleLogout() {
     try {
-      const portal = user?.role?.slug === "resident" ? "/" : "/admin/login";
       await logout();
-      navigate(portal, {
+      navigate("/login", {
         replace: true,
       });
     } catch {

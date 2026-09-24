@@ -226,7 +226,7 @@ class DocumentOcrTest extends TestCase
             ->postJson("/api/v1/documents/{$document->id}/process-ocr")
             ->assertStatus(200)
             ->assertJsonPath('data.status', 'needs_review')
-            ->assertJsonPath('data.extraction.ocr_status', 'needs_review');
+            ->assertJsonPath('data.extraction.ocr_status', 'needs_staff_verification');
 
         $low = $document->extraction->low_confidence_fields ?? [];
         $fields = array_column($low, 'field');
@@ -244,7 +244,7 @@ class DocumentOcrTest extends TestCase
             ->postJson("/api/v1/documents/{$document->id}/process-ocr")
             ->assertStatus(200)
             ->assertJsonPath('data.extraction.classification', 'unknown')
-            ->assertJsonPath('data.extraction.ocr_status', 'needs_review')
+            ->assertJsonPath('data.extraction.ocr_status', 'needs_staff_verification')
             ->assertJsonPath('data.status', 'needs_review');
     }
 
@@ -258,7 +258,7 @@ class DocumentOcrTest extends TestCase
             ->postJson("/api/v1/documents/{$document->id}/process-ocr")
             ->assertStatus(200)
             ->assertJsonPath('data.extraction.classification', 'unknown')
-            ->assertJsonPath('data.extraction.ocr_status', 'needs_review');
+            ->assertJsonPath('data.extraction.ocr_status', 'needs_staff_verification');
 
         $extraction = $document->extraction;
         $this->assertSame('unknown', $extraction->classification);

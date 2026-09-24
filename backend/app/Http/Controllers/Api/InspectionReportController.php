@@ -5,18 +5,31 @@ namespace App\Http\Controllers\Api;
 use App\Http\Resources\InspectionReportResource;
 use App\Models\Inspection;
 use App\Models\InspectionSchedule;
+use App\Services\DocumentPdfService;
 use App\Services\InspectionSyncService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Symfony\Component\HttpFoundation\Response;
 
 class InspectionReportController extends BaseApiController
 {
+    public function __construct(private readonly DocumentPdfService $pdfService) {}
+
     public function show(InspectionSchedule $inspectionSchedule): JsonResponse
     {
         return $this->success(
             new InspectionReportResource(self::loadReport($inspectionSchedule)),
             'Inspection report generated successfully'
         );
+    }
+
+    public function pdf(InspectionSchedule $inspectionSchedule): Response
+    {
+        $inspection = self::loadReport($inspectionSchedule);
+        $name = $inspection->establishment?->name ?? 'inspection';
+
+        return $this->pdfService->inspectionReportPdf($inspection)
+            ->stream('inspection-report-'.str($name)->slug().'.pdf');
     }
 
     public function update(Request $request, InspectionSchedule $inspectionSchedule): JsonResponse

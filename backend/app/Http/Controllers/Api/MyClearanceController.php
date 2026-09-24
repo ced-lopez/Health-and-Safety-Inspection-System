@@ -95,4 +95,26 @@ class MyClearanceController extends BaseApiController
             ->pdf($clearance)
             ->stream('clearance-'.$clearance->clearance_number.'.pdf');
     }
+
+    public function qrCard(Request $request, Clearance $clearance): Response
+    {
+        $this->authorize('downloadPdf', $clearance);
+
+        $format = $request->string('format', 'wallet')->toString();
+        abort_unless(in_array($format, ['wallet', 'signage'], true), 422);
+
+        AuditLogger::log(
+            $request->user(),
+            'Clearance',
+            'Downloaded QR Card',
+            "Downloaded {$format} QR card for clearance {$clearance->clearance_number}",
+            $clearance,
+            $request,
+            event: 'clearance.qr_card_downloaded',
+        );
+
+        return $this->pdfService
+            ->qrCardPdf($clearance, $format)
+            ->stream('clearance-qr-card-'.$clearance->clearance_number.'-'.$format.'.pdf');
+    }
 }

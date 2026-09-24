@@ -10,6 +10,7 @@ use App\Models\Inspection;
 use App\Models\InspectionAssignment;
 use App\Models\InspectionCategory;
 use App\Models\InspectionRequest;
+use App\Models\Payment;
 use App\Models\Role;
 use App\Models\User;
 use Database\Seeders\InspectionTaxonomySeeder;
@@ -146,7 +147,15 @@ class InspectionAssignmentFlowTest extends TestCase
 
     public function test_submit_finalizes_inspection_and_request(): void
     {
-        $request = $this->makeWizardRequest();
+        $establishment = Establishment::query()->create([
+            'name' => 'Clearance Test Store',
+            'business_type' => 'Retail',
+            'owner_name' => 'Juan Dela Cruz',
+            'address' => 'Barangay 178',
+            'registration_number' => 'B178-CLR-001',
+            'status' => 'active',
+        ]);
+        $request = $this->makeWizardRequest(['establishment_id' => $establishment->id]);
         $assignment = $this->makeAssignment($request);
 
         $this->actingAs($this->inspector, 'sanctum')
@@ -156,6 +165,7 @@ class InspectionAssignmentFlowTest extends TestCase
         $this->actingAs($this->inspector, 'sanctum')
             ->putJson("/api/v1/inspection-assignments/{$assignment->id}/submit", [
                 'notes' => 'All good',
+                'outcome' => 'compliant',
             ])
             ->assertStatus(200);
 
@@ -175,6 +185,40 @@ class InspectionAssignmentFlowTest extends TestCase
 
         $this->assertSame('completed', $inspection->status);
         $this->assertNotNull($inspection->completed_at);
+    }
+
+    public function test_or_numbered_clearance_payment_automatically_issues_qr_clearance(): void
+    {
+        $establishment = Establishment::query()->create([
+            'name' => 'QR Clearance Test Store',
+            'business_type' => 'Retail',
+            'owner_name' => 'Juan Dela Cruz',
+            'address' => 'Barangay 178',
+            'registration_number' => 'B178-QR-001',
+            'status' => 'active',
+        ]);
+        $request = $this->makeWizardRequest(['establishment_id' => $establishment->id]);
+        $assignment = $this->makeAssignment($request);
+        $staff = $this->makeUser('barangay_staff', 'paymentstaff@example.com');
+
+        $this->actingAs($this->inspector, 'sanctum')
+            ->putJson("/api/v1/inspection-assignments/{$assignment->id}/start");
+        $this->actingAs($this->inspector, 'sanctum')
+            ->putJson("/api/v1/inspection-assignments/{$assignment->id}/submit", ['outcome' => 'compliant']);
+
+        $payment = Payment::query()->where('inspection_request_id', $request->id)->firstOrFail();
+        $this->assertSame('pending', $payment->status);
+
+        $this->actingAs($staff, 'sanctum')
+            ->patchJson("/api/v1/payments/{$payment->id}/confirm", [
+                'amount' => 150,
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.or_number', 'OR-2026-000001');
+
+        $this->assertDatabaseHas('payments', ['id' => $payment->id, 'status' => 'paid', 'reference_number' => 'OR-2026-000001']);
+        $this->assertDatabaseHas('clearances', ['inspection_id' => $payment->inspection_id, 'status' => 'active']);
+        $this->assertDatabaseHas('inspection_requests', ['id' => $request->id, 'status' => 'clearance_approved']);
     }
 
     public function test_inspector_can_load_checklist_for_request_without_establishment(): void
