@@ -150,6 +150,12 @@ export default function InspectionsPage() {
   const { user } = useAuth()
   const [schedules, setSchedules] = useState([])
   const [view, setView] = useState('list')
+
+  useEffect(() => {
+    const roleSlug = user?.role?.slug
+    const canWriteInner = ['administrator', 'barangay_staff'].includes(roleSlug)
+    if (!canWriteInner && view === 'queue') setView('list')
+  }, [user?.role?.slug, view])
   const [establishments, setEstablishments] = useState([])
   const [inspectors, setInspectors] = useState([])
   const [meta, setMeta] = useState({ current_page: 1, last_page: 1, total: 0 })
@@ -230,7 +236,7 @@ export default function InspectionsPage() {
   const queueQuery = useQuery({
     queryKey: ['inspection-queue-pending'],
     queryFn: () => fetchInspectionQueue({ per_page: 50, pending_schedule: true }),
-    enabled: view === 'queue',
+    enabled: view === 'queue' && canWrite,
   })
 
   const needsScheduling = useMemo(() => {
@@ -644,7 +650,7 @@ export default function InspectionsPage() {
         <TabsList>
           <TabsTrigger value="list">List View</TabsTrigger>
           <TabsTrigger value="calendar">Calendar View</TabsTrigger>
-          <TabsTrigger value="queue">Needs Scheduling</TabsTrigger>
+          {canWrite && <TabsTrigger value="queue">Needs Scheduling</TabsTrigger>}
         </TabsList>
         <TabsContent value="list">
           <Card>
@@ -869,7 +875,7 @@ export default function InspectionsPage() {
                           </TableCell>
                           <TableCell>
                             <div className="flex justify-end gap-2">
-                              {requestItem.status === 'approved_for_inspection' &&
+                              {canWrite && requestItem.status === 'approved_for_inspection' &&
                                 !requestItem.inspection_assignment && (
                                   <Button
                                     variant="outline"
@@ -880,14 +886,18 @@ export default function InspectionsPage() {
                                     Assign
                                   </Button>
                                 )}
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => openScheduleDialog(requestItem)}
-                              >
-                                <CalendarPlus className="size-4" />
-                                Schedule
-                              </Button>
+                              {canWrite ? (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => openScheduleDialog(requestItem)}
+                                >
+                                  <CalendarPlus className="size-4" />
+                                  Schedule
+                                </Button>
+                              ) : (
+                                <span className="text-xs text-muted-foreground">View only</span>
+                              )}
                             </div>
                           </TableCell>
                         </TableRow>
