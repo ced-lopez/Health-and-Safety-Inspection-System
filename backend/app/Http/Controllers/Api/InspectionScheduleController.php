@@ -29,12 +29,15 @@ class InspectionScheduleController extends BaseApiController
         $query = InspectionSchedule::query()
             ->with(['establishment', 'inspector', 'request']);
 
-        if ($request->filled('status') && $request->input('status') !== 'all') {
-            $query->where('status', $request->input('status'));
+        // Inspector sees only their own inspections/establishments
+        if ($request->user()?->role?->slug === 'inspector') {
+            $query->where('inspector_id', $request->user()->id);
+        } elseif ($request->filled('inspector_id') && $request->input('inspector_id') !== 'all') {
+            $query->where('inspector_id', $request->integer('inspector_id'));
         }
 
-        if ($request->filled('inspector_id') && $request->input('inspector_id') !== 'all') {
-            $query->where('inspector_id', $request->integer('inspector_id'));
+        if ($request->filled('status') && $request->input('status') !== 'all') {
+            $query->where('status', $request->input('status'));
         }
 
         if ($request->filled('date')) {
@@ -292,7 +295,10 @@ class InspectionScheduleController extends BaseApiController
             ])
             ->whereBetween('scheduled_at', [$from, $to]);
 
-        if (! empty($validated['inspector_id'])) {
+        // Inspector sees only their own calendar
+        if ($request->user()?->role?->slug === 'inspector') {
+            $query->where('inspector_id', $request->user()->id);
+        } elseif (! empty($validated['inspector_id'])) {
             $query->where('inspector_id', $validated['inspector_id']);
         }
 

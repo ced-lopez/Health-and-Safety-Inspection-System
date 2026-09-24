@@ -205,16 +205,17 @@ export default function InspectionsPage() {
   const roleSlug = user?.role?.slug
   const canWrite = ['administrator', 'barangay_staff'].includes(roleSlug)
   const canArchive = roleSlug === 'administrator'
+  const isInspector = roleSlug === 'inspector'
 
   const queryParams = useMemo(
     () => ({
       search: filters.search || undefined,
       status: filters.status,
-      inspector_id: filters.inspector_id,
+      inspector_id: isInspector ? user?.id : filters.inspector_id,
       page: filters.page,
       per_page: 10,
     }),
-    [filters],
+    [filters, isInspector, user?.id],
   )
 
   const selectedDateKey = toDateInput(selectedDate)
@@ -661,12 +662,12 @@ export default function InspectionsPage() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="grid gap-3 lg:grid-cols-[1fr_180px_220px]">
+              <div className={`grid gap-3 ${isInspector ? 'lg:grid-cols-[1fr_180px]' : 'lg:grid-cols-[1fr_180px_220px]'}`}>
                 <div className="relative">
                   <Search className="absolute left-2.5 top-2 size-4 text-muted-foreground" />
                   <Input
                     className="pl-8"
-                    placeholder="Search establishment or registration no."
+                    placeholder={isInspector ? "Search my establishments" : "Search establishment or registration no."}
                     value={searchInput}
                     onChange={(event) => setSearchInput(event.target.value)}
                   />
@@ -683,19 +684,24 @@ export default function InspectionsPage() {
                     </option>
                   ))}
                 </select>
-                <select
-                  className="h-8 rounded-lg border border-input bg-background px-2.5 text-sm"
-                  value={filters.inspector_id}
-                  onChange={(event) => updateFilter('inspector_id', event.target.value)}
-                >
-                  <option value="all">All inspectors</option>
-                  {inspectors.map((inspector) => (
-                    <option key={inspector.id} value={inspector.id}>
-                      {inspector.name}
-                    </option>
-                  ))}
-                </select>
+                {!isInspector && (
+                  <select
+                    className="h-8 rounded-lg border border-input bg-background px-2.5 text-sm"
+                    value={filters.inspector_id}
+                    onChange={(event) => updateFilter('inspector_id', event.target.value)}
+                  >
+                    <option value="all">All inspectors</option>
+                    {inspectors.map((inspector) => (
+                      <option key={inspector.id} value={inspector.id}>
+                        {inspector.name}
+                      </option>
+                    ))}
+                  </select>
+                )}
               </div>
+              {isInspector && (
+                <p className="text-xs text-muted-foreground">Showing only inspections assigned to you and establishments you inspected.</p>
+              )}
 
               {loading ? (
                 <div className="space-y-3">
