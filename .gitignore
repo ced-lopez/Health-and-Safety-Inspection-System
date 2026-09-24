@@ -54,6 +54,11 @@ node_modules/
 /frontend/dist/
 /frontend/.vite/
 
+# Backups / DB dumps (never commit - contains PII/hashes)
+backups/
+*.sql
+*.dump
+
 # Coverage
 coverage/
 *.log
