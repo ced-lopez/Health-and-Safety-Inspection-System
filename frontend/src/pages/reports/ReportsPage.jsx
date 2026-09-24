@@ -30,6 +30,7 @@ import {
   fetchClearanceReports,
   fetchDashboardReport,
   fetchSobaReports,
+  exportReport,
 } from '@/services/reportService'
 
 const MONTH_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
@@ -126,8 +127,20 @@ export default function ReportsPage() {
     queryFn: () => fetchSobaReports(sobaYear, sobaSemester),
   })
 
-  function handleDownloadCSV(reportType) {
-    toast.info(`${reportType} CSV export coming soon`)
+  const [exporting, setExporting] = useState(null)
+
+  async function handleExport(type, format = 'csv', params = {}) {
+    setExporting(`${type}-${format}`)
+    try {
+      const year = new Date().getFullYear()
+      const exportParams = type === 'soba' ? { year: sobaYear, semester: Number(sobaSemester), ...params } : { year, ...params }
+      await exportReport(type, exportParams, format)
+      toast.success(`${type} ${format.toUpperCase()} exported`)
+    } catch (e) {
+      toast.error(e?.response?.data?.message || `Failed to export ${type}`)
+    } finally {
+      setExporting(null)
+    }
   }
 
   const insStats = insData?.data ?? {}
@@ -249,12 +262,15 @@ export default function ReportsPage() {
           <Card>
             <CardHeader>
               <CardTitle>Quick Actions</CardTitle>
-              <CardDescription>Export reports or view detailed breakdowns</CardDescription>
+              <CardDescription>Export reports — CSV for Excel/Sheets, Excel (.xlsx) or PDF for printing/SOBA</CardDescription>
             </CardHeader>
-            <CardContent className="flex flex-wrap gap-3">
-              <Button variant="outline" onClick={() => handleDownloadCSV('Inspection')}><Download className="size-4" /> Export Inspections</Button>
-              <Button variant="outline" onClick={() => handleDownloadCSV('Violation')}><Download className="size-4" /> Export Violations</Button>
-              <Button variant="outline" onClick={() => handleDownloadCSV('Clearance')}><Download className="size-4" /> Export Clearances</Button>
+            <CardContent className="flex flex-wrap gap-2">
+              <Button variant="outline" disabled={exporting === 'inspections-csv'} onClick={() => handleExport('inspections', 'csv')}><Download className="size-4" /> {exporting === 'inspections-csv' ? 'Exporting…' : 'Inspections CSV'}</Button>
+              <Button variant="outline" disabled={exporting === 'inspections-excel'} onClick={() => handleExport('inspections', 'excel')}><Download className="size-4" /> Inspections Excel</Button>
+              <Button variant="outline" disabled={exporting === 'violations-csv'} onClick={() => handleExport('violations', 'csv')}><Download className="size-4" /> Violations CSV</Button>
+              <Button variant="outline" disabled={exporting === 'clearances-csv'} onClick={() => handleExport('clearances', 'csv')}><Download className="size-4" /> Clearances CSV</Button>
+              <Button variant="outline" disabled={exporting === 'dashboard-pdf'} onClick={() => handleExport('dashboard', 'pdf')}><Download className="size-4" /> Dashboard PDF</Button>
+              <Button variant="outline" disabled={exporting === 'soba-pdf'} onClick={() => handleExport('soba', 'pdf')}><Download className="size-4" /> SOBA PDF</Button>
             </CardContent>
           </Card>
         </TabsContent>
@@ -290,6 +306,11 @@ export default function ReportsPage() {
                   )}
                 </CardContent>
               </Card>
+              <div className="flex flex-wrap gap-2">
+                <Button variant="outline" size="sm" disabled={exporting === 'inspections-csv'} onClick={() => handleExport('inspections', 'csv')}><Download className="size-4" /> CSV</Button>
+                <Button variant="outline" size="sm" disabled={exporting === 'inspections-excel'} onClick={() => handleExport('inspections', 'excel')}><Download className="size-4" /> Excel</Button>
+                <Button variant="outline" size="sm" disabled={exporting === 'inspections-pdf'} onClick={() => handleExport('inspections', 'pdf')}><Download className="size-4" /> PDF</Button>
+              </div>
             </>
           )}
         </TabsContent>
@@ -352,6 +373,11 @@ export default function ReportsPage() {
                   </CardContent>
                 </Card>
               </div>
+              <div className="flex flex-wrap gap-2">
+                <Button variant="outline" size="sm" disabled={exporting === 'violations-csv'} onClick={() => handleExport('violations', 'csv')}><Download className="size-4" /> CSV</Button>
+                <Button variant="outline" size="sm" disabled={exporting === 'violations-excel'} onClick={() => handleExport('violations', 'excel')}><Download className="size-4" /> Excel</Button>
+                <Button variant="outline" size="sm" disabled={exporting === 'violations-pdf'} onClick={() => handleExport('violations', 'pdf')}><Download className="size-4" /> PDF</Button>
+              </div>
             </>
           )}
         </TabsContent>
@@ -385,6 +411,11 @@ export default function ReportsPage() {
                   )}
                 </CardContent>
               </Card>
+              <div className="flex flex-wrap gap-2">
+                <Button variant="outline" size="sm" disabled={exporting === 'clearances-csv'} onClick={() => handleExport('clearances', 'csv')}><Download className="size-4" /> CSV</Button>
+                <Button variant="outline" size="sm" disabled={exporting === 'clearances-excel'} onClick={() => handleExport('clearances', 'excel')}><Download className="size-4" /> Excel</Button>
+                <Button variant="outline" size="sm" disabled={exporting === 'clearances-pdf'} onClick={() => handleExport('clearances', 'pdf')}><Download className="size-4" /> PDF</Button>
+              </div>
             </>
           )}
         </TabsContent>
@@ -409,6 +440,11 @@ export default function ReportsPage() {
               <option value="2">2nd Semester (Jul–Dec)</option>
             </select>
             <span className="text-sm text-muted-foreground">{sobaStats.period?.label ?? 'Loading…'}</span>
+            <div className="ml-auto flex gap-2">
+              <Button variant="outline" size="sm" disabled={exporting === 'soba-csv'} onClick={() => handleExport('soba', 'csv')}><Download className="size-4" /> CSV</Button>
+              <Button variant="outline" size="sm" disabled={exporting === 'soba-excel'} onClick={() => handleExport('soba', 'excel')}><Download className="size-4" /> Excel</Button>
+              <Button variant="outline" size="sm" disabled={exporting === 'soba-pdf'} onClick={() => handleExport('soba', 'pdf')}><Download className="size-4" /> PDF</Button>
+            </div>
           </div>
 
           {sobaLoading ? <Skeleton className="h-40 w-full" /> : (

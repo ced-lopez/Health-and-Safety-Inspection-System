@@ -24,3 +24,26 @@ export async function fetchSobaReports(year, semester) {
   const { data } = await api.get('/v1/reports/soba', { params: { year, semester } })
   return data
 }
+
+export async function exportReport(type, params = {}, format = 'csv') {
+  const res = await api.get(`/v1/reports/${type}/export`, {
+    params: { ...params, format },
+    responseType: 'blob',
+  })
+  const disposition = res.headers['content-disposition']
+  let filename = `${type}-${format}.${format === 'excel' ? 'xlsx' : format}`
+  if (disposition) {
+    const match = disposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/)
+    if (match?.[1]) filename = match[1].replace(/['"]/g, '')
+  }
+  const blob = new Blob([res.data], { type: res.headers['content-type'] })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+  return filename
+}

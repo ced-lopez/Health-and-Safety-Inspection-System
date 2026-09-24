@@ -217,6 +217,7 @@ Route::prefix('v1')->group(function () {
             Route::get('/clearances', [ReportController::class, 'clearances']);
             Route::get('/dashboard', [ReportController::class, 'dashboard']);
             Route::get('/soba', [ReportController::class, 'soba']);
+            Route::get('/{type}/export', [ReportController::class, 'export'])->whereIn('type', ['inspections', 'violations', 'clearances', 'dashboard', 'soba']);
         });
 
         Route::prefix('audit-logs')->middleware('role:administrator,barangay_staff')->group(function () {
