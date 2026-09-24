@@ -363,7 +363,7 @@ class DocumentFieldExtractorTest extends TestCase
     {
         $result = $this->extractor->detectExpiration(null);
 
-        $this->assertFalse($result['is_expired']);
+        $this->assertNull($result['is_expired']);
         $this->assertFalse($result['expiration_found']);
     }
 }

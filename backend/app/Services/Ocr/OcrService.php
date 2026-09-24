@@ -15,6 +15,21 @@ use Throwable;
 class OcrService
 {
     /**
+     * Minimum proportion of expected fields that must be successfully extracted
+     * (value !== null) for a document to avoid needs_staff_verification.
+     *
+     * This is a FIELD-COMPLETENESS ratio (filled / total), NOT the per-field
+     * Tesseract confidence (OCR_CONFIDENCE_LOW_THRESHOLD=0.75). See config/ocr.php
+     * confidence.low/medium vs field_completeness_threshold and
+     * DocumentFieldExtractor::lowThreshold() for the distinction. Interaction:
+     * - Per-field low confidence (<0.75) → needs_review via lowConfidenceFields
+     * - Completeness <0.5 OR expiration unparseable → needs_staff_verification (wins
+     *   even if per-field OCR confidence is high, because a perfect read of half
+     *   the fields is still an incomplete document)
+     */
+    public const FIELD_COMPLETENESS_THRESHOLD = 0.5;
+
+    /**
      * Characters whose OCR readings are frequently ambiguous (B/8, O/0, I/1,
      * S/5, D/0, Z/2, G/6, L/1). ID numbers containing these alongside digits
      * are flagged for manual review instead of being silently "corrected".
@@ -183,8 +198,13 @@ class OcrService
             $missing = $this->detectMissingRequirements($document, $effectiveType);
 
             $needsReview = $this->needsReview($classification, $lowConfidence, $fields);
+            try {
+                $completenessThreshold = (float) (function_exists('config') ? config('ocr.field_completeness_threshold', self::FIELD_COMPLETENESS_THRESHOLD) : self::FIELD_COMPLETENESS_THRESHOLD);
+            } catch (\Throwable) {
+                $completenessThreshold = (float) self::FIELD_COMPLETENESS_THRESHOLD;
+            }
             $fieldConfidence = count($fields) > 0 ? collect($fields)->filter(fn ($f) => ($f['value'] ?? null) !== null && trim((string) $f['value']) !== '')->count() / count($fields) : 0;
-            if (($fieldConfidence < 0.5 && count($fields) > 0) || $expiration['is_expired'] === null) {
+            if (($fieldConfidence < $completenessThreshold && count($fields) > 0) || $expiration['is_expired'] === null) {
                 $needsReview = true;
                 $ocrStatus = 'needs_staff_verification';
             } else {

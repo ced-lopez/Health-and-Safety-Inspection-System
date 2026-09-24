@@ -25,14 +25,14 @@ class OcrRunSelector
     public function select(array $versions, string $classification, callable $runner, array $options = []): array
     {
         $psmModes = array_filter(
-            array_map('intval', (array) ($options['psm_modes'] ?? config('ocr.psm_modes', [6, 11, 12]))),
+            array_map('intval', (array) ($options['psm_modes'] ?? $this->cfg('ocr.psm_modes', [6, 11, 12]))),
             fn (int $mode) => $mode > 0
         );
 
-        $maxPasses = (int) ($options['max_passes'] ?? config('ocr.max_passes', 6));
+        $maxPasses = (int) ($options['max_passes'] ?? $this->cfg('ocr.max_passes', 6));
 
         if ($psmModes === []) {
-            $psmModes = [config('ocr.default_psm', 3)];
+            $psmModes = [$this->cfg('ocr.default_psm', 3)];
         }
 
         if ($versions === []) {
@@ -42,6 +42,9 @@ class OcrRunSelector
         $candidates = [];
         $seen = [];
         $passes = 0;
+        $earlyExitEnabled = (bool) ($options['early_exit'] ?? $this->cfg('ocr.early_exit_enabled', true));
+        $earlyExitScore = (float) ($options['early_exit_score'] ?? $this->cfg('ocr.early_exit_score', 7.5));
+        $bestScore = 0.0;
 
         foreach ($versions as $version) {
             foreach ($psmModes as $psm) {
@@ -81,16 +84,24 @@ class OcrRunSelector
 
                 $seen[$key] = true;
 
+                $scoreData = $this->score($text, $classification);
                 $candidates[] = [
                     'text' => $text,
                     'psm' => $psm,
                     'kind' => $version['kind'] ?? 'original',
                     'conf' => isset($result['conf']) ? (float) $result['conf'] : null,
                     'words' => $result['words'] ?? [],
-                    'score' => $this->score($text, $classification),
+                    'score' => $scoreData,
                 ];
 
+                $bestScore = max($bestScore, (float) $scoreData['score']);
                 $passes++;
+
+                // Early-exit: if a candidate already scores very high, stop
+                // running remaining PSMs/versions — accuracy already achieved.
+                if ($earlyExitEnabled && $bestScore >= $earlyExitScore) {
+                    break 2;
+                }
             }
         }
 
@@ -231,6 +242,15 @@ class OcrRunSelector
         $normalized = preg_replace('/\s+/u', ' ', $normalized) ?? $normalized;
 
         return hash('sha256', $normalized);
+    }
+
+    private function cfg(string $key, mixed $default): mixed
+    {
+        try {
+            return function_exists('config') ? config($key, $default) : $default;
+        } catch (\Throwable) {
+            return $default;
+        }
     }
 
     private function expectedLabels(string $classification): array

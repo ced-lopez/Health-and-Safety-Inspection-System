@@ -8,10 +8,17 @@ return [
     'pdf_dpi' => (int) env('OCR_PDF_DPI', 300),
     'storage_disk' => env('OCR_STORAGE_DISK', 'public'),
     'confidence' => [
+        // Per-field OCR confidence (0-1) from DocumentFieldExtractor::confidenceFor().
         // 0.90–1.00 high, 0.75–0.89 medium, below 0.75 low (flagged for manual review).
+        // Wired to DocumentFieldExtractor::lowThreshold() / mediumThreshold().
+        // This is DISTINCT from field_completeness_threshold (0.5) in OcrService which
+        // measures proportion of expected fields successfully extracted, not per-field
+        // Tesseract word-confidence. Either gate can trigger needs_staff_verification;
+        // high OCR confidence does NOT override low completeness.
         'low' => (float) env('OCR_CONFIDENCE_LOW_THRESHOLD', 0.75),
         'medium' => (float) env('OCR_CONFIDENCE_MEDIUM_THRESHOLD', 0.9),
     ],
+    'field_completeness_threshold' => (float) env('OCR_FIELD_COMPLETENESS_THRESHOLD', 0.5),
     'max_file_size_kb' => (int) env('OCR_MAX_FILE_SIZE_KB', 10240),
     'allowed_mimes' => explode(',', env('OCR_ALLOWED_MIMES', 'pdf,jpg,jpeg,png,webp')),
 
@@ -26,6 +33,8 @@ return [
 
     // Bounded multi-pass OCR: never run unlimited passes.
     'max_passes' => (int) env('OCR_MAX_PASSES', 6),
+    'early_exit_score' => (float) env('OCR_EARLY_EXIT_SCORE', 7.5),
+    'early_exit_enabled' => (bool) env('OCR_EARLY_EXIT_ENABLED', true),
 
     // Image preprocessing pipeline (GD). The uploaded original is never modified.
     'preprocess' => [

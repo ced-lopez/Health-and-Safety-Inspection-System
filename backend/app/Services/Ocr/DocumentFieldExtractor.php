@@ -7,7 +7,21 @@ use Throwable;
 
 class DocumentFieldExtractor
 {
+    /**
+     * Per-field OCR confidence threshold.
+     *
+     * This is the raw Tesseract/field-extraction confidence (0-1) for a single
+     * extracted field value. Below this, the field is flagged in low_confidence_fields
+     * and the document is routed to needs_review. Wired to env OCR_CONFIDENCE_LOW_THRESHOLD
+     * via config('ocr.confidence.low') — default 0.75. See also OcrService field-completeness
+     * threshold (0.5) which is a *different* metric: proportion of expected fields found,
+     * not per-field OCR confidence. Interaction: either low per-field confidence OR low
+     * field-completeness (<0.5) triggers needs_staff_verification; high OCR confidence does
+     * NOT override low completeness.
+     */
     public const LOW_CONFIDENCE_THRESHOLD = 0.75;
+
+    public const MEDIUM_CONFIDENCE_THRESHOLD = 0.9;
 
     /**
      * Extracts structured fields (with per-field confidence) from OCR text
@@ -40,15 +54,34 @@ class DocumentFieldExtractor
         return $fields;
     }
 
+    public static function lowThreshold(): float
+    {
+        try {
+            return (float) (function_exists('config') ? config('ocr.confidence.low', self::LOW_CONFIDENCE_THRESHOLD) : self::LOW_CONFIDENCE_THRESHOLD);
+        } catch (\Throwable) {
+            return (float) self::LOW_CONFIDENCE_THRESHOLD;
+        }
+    }
+
+    public static function mediumThreshold(): float
+    {
+        try {
+            return (float) (function_exists('config') ? config('ocr.confidence.medium', self::MEDIUM_CONFIDENCE_THRESHOLD) : self::MEDIUM_CONFIDENCE_THRESHOLD);
+        } catch (\Throwable) {
+            return (float) self::MEDIUM_CONFIDENCE_THRESHOLD;
+        }
+    }
+
     public function lowConfidenceFields(array $fields): array
     {
+        $threshold = self::lowThreshold();
         $flagged = [];
 
         foreach ($fields as $name => $result) {
             $value = $result['value'] ?? null;
             $confidence = (float) ($result['confidence'] ?? 0);
 
-            if ($value !== null && $confidence < self::LOW_CONFIDENCE_THRESHOLD) {
+            if ($value !== null && $confidence < $threshold) {
                 $flagged[] = [
                     'field' => $name,
                     'value' => $value,
@@ -62,7 +95,7 @@ class DocumentFieldExtractor
 
     public function isLowConfidence(float $confidence): bool
     {
-        return $confidence < self::LOW_CONFIDENCE_THRESHOLD;
+        return $confidence < self::lowThreshold();
     }
 
     public function detectExpiration(?string $expirationDate): array
@@ -252,7 +285,7 @@ class DocumentFieldExtractor
             if ($value !== null) {
                 $confidence = (float) ($fields[$component]['confidence'] ?? 0.0);
 
-                if ($confidence < 0.75) {
+                if ($confidence < self::lowThreshold()) {
                     return $fields;
                 }
 
