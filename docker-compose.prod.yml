@@ -6,8 +6,8 @@ services:
     environment:
       MYSQL_DATABASE: ${DB_DATABASE:-health_safety_inspection}
       MYSQL_USER: ${DB_USERNAME:-health_safety}
-      MYSQL_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set - create .env from .env.example or set in backend/.env and export it}
-      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-${DB_PASSWORD:?DB_PASSWORD must be set - create .env from .env.example or set in backend/.env and export it}}
+      MYSQL_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set - create .env from .env.example or set in backend/.env.production and export it}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-${DB_PASSWORD:?DB_PASSWORD must be set - create .env from .env.example or set in backend/.env.production and export it}}
     volumes:
       - mysql_data:/var/lib/mysql
     healthcheck:
@@ -24,7 +24,7 @@ services:
       dockerfile: Dockerfile
     container_name: health-safety-backend
     restart: unless-stopped
-    env_file: ./backend/.env
+    env_file: ./backend/.env.production
     environment:
       # override to ensure prod domain even if .env.production is not reloaded
       APP_ENV: production
@@ -37,7 +37,7 @@ services:
       DB_PORT: ${DB_PORT:-3306}
       DB_DATABASE: ${DB_DATABASE:-health_safety_inspection}
       DB_USERNAME: ${DB_USERNAME:-health_safety}
-      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set - create .env from .env.example or set in backend/.env and export it}
+      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set - create .env from .env.example or set in backend/.env.production and export it}
     volumes:
       - ./backend:/var/www/html
       - backend_vendor:/var/www/html/vendor
