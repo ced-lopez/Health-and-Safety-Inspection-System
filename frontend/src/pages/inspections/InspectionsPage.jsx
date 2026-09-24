@@ -548,8 +548,9 @@ export default function InspectionsPage() {
       toast.success('Compliance checklist saved')
       setChecklistOpen(false)
     } catch (error) {
-      toast.error('Unable to save compliance checklist')
-      console.error(error)
+      const msg = error?.response?.data?.message ?? error?.response?.data?.errors ? Object.values(error.response.data.errors).flat().join(', ') : null
+      toast.error(msg || 'Unable to save compliance checklist')
+      console.error(error?.response?.data ?? error)
     } finally {
       setChecklistSubmitting(false)
     }

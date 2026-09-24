@@ -34,11 +34,6 @@ export async function saveComplianceChecklist(scheduleId, payload) {
   const { data } = await api.post(
     `/v1/inspections/schedules/${scheduleId}/checklist`,
     payload,
-    {
-      headers: {
-        'Content-Type': 'multipart/form-data',
-      },
-    },
   )
 
   return data
