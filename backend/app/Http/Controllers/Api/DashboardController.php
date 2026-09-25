@@ -238,12 +238,17 @@ class DashboardController extends BaseApiController
                 ->map(fn ($row) => ['category' => $row->category, 'slug' => $row->slug, 'total' => (int) $row->total])
                 ->toArray();
 
-            $establishmentsByCategory = Establishment::query()
-                ->selectRaw('COALESCE(NULLIF(category, \'\'), business_type, \'Uncategorized\') as category, COUNT(*) as total')
-                ->groupByRaw('COALESCE(NULLIF(category, \'\'), business_type, \'Uncategorized\')')
+            $categorizedEstablishments = Establishment::query()
+                ->selectRaw("COALESCE(NULLIF(category, ''), business_type, 'Uncategorized') as category_label");
+
+            $establishmentsByCategory = DB::query()
+                ->fromSub($categorizedEstablishments, 'categorized_establishments')
+                ->select('category_label')
+                ->selectRaw('COUNT(*) as total')
+                ->groupBy('category_label')
                 ->orderByDesc('total')
                 ->get()
-                ->map(fn ($row) => ['category' => $row->category, 'total' => (int) $row->total])
+                ->map(fn ($row) => ['category' => $row->category_label, 'total' => (int) $row->total])
                 ->toArray();
 
             return [
