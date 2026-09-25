@@ -14,7 +14,7 @@ CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
 
 FROM base AS build
 
-ARG VITE_API_URL=https://backend-hsis.hostforgeplatforms.com/api/v1
+ARG VITE_API_URL=https://backend-hsis.hostforgeplatforms.com/api
 ENV VITE_API_URL=$VITE_API_URL
 RUN npm run build
 
