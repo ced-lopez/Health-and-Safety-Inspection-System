@@ -9,4 +9,6 @@ storage/framework/sessions/*
 storage/framework/testing/*
 storage/framework/views/*
 storage/logs/*
-bootstrap/cache/*.php
+bootstrap/cache/*
+!bootstrap/cache/.gitignore
+public/storage
